@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs } from "./lib/supabase";
-import { openPDF, calcTax } from "./lib/pdf";
+import { openPDF, generateAndDownloadPDF, calcTax } from "./lib/pdf";
 
 const tod = () => new Date().toISOString().slice(0, 10);
 const fm = (n) => Number(n || 0).toLocaleString("ja-JP");
@@ -129,7 +129,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
         const prods = await db.getProducts();
         setProducts(prods);
       }
-      if (print) openPDF(saved, co);
+      if (print) await generateAndDownloadPDF(saved, co);
       // 結果メッセージ
       const msgs = [];
       if (result.newCustomer) msgs.push("顧客「" + result.newCustomer + "」を自動登録しました");
@@ -165,7 +165,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
     <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"flex-end" }}>
       <Btn onClick={onClose}>キャンセル</Btn>
       <Btn variant="primary" onClick={()=>handleSave(false)} disabled={saving}>💾 保存</Btn>
-      <Btn variant="blue" onClick={()=>handleSave(true)} disabled={saving}>🖨 保存してPDF</Btn>
+      <Btn variant="blue" onClick={()=>handleSave(true)} disabled={saving}>📄 保存してPDF生成</Btn>
     </div>
   </Modal>;
 }
@@ -201,7 +201,7 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
 }
 
 // ── DocCard ─────────────────────────────────────────────────
-function DocCard({ doc, co, onEdit, onPrint, onSave, saved }) {
+function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
   const tx = calcTax(doc.items||[]);
   const tc = doc.docType==="請求書"?"#1d4ed8":doc.docType==="領収書"?"#7c3aed":"#047857";
   return <div style={{ background:"#fff", border:"1.5px solid #e5e7eb", borderRadius:10, overflow:"hidden", marginTop:8, maxWidth:420, boxShadow:"0 2px 8px rgba(0,0,0,0.07)" }}>
@@ -224,9 +224,9 @@ function DocCard({ doc, co, onEdit, onPrint, onSave, saved }) {
         </div>
         <div style={{ display:"flex", gap:5, flexWrap:"wrap", justifyContent:"flex-end" }}>
           <Btn small onClick={onEdit}>✏️ 編集</Btn>
-          <Btn small variant="primary" onClick={onPrint}>🖨 PDF</Btn>
-          {!saved&&<Btn small variant="green" onClick={onSave}>💾 保存</Btn>}
-          {saved&&<span style={{ fontSize:11, color:"#16a34a", alignSelf:"center" }}>✓ 保存済</span>}
+          <Btn small variant="primary" onClick={onPrint}>📄 PDF生成</Btn>
+          {saving&&<span style={{ fontSize:11, color:"#9ca3af", alignSelf:"center" }}>保存中...</span>}
+          {!saving&&saved&&<span style={{ fontSize:11, color:"#16a34a", alignSelf:"center" }}>✓ 自動保存済</span>}
         </div>
       </div>
     </div>
@@ -255,8 +255,32 @@ function ChatView({ co, products, customers, history, setHistory, user }) {
         const parsed = await aiParse(text, co);
         parsed.docNo = newDocNo(parsed.docType||"納品書");
         const msgId = tid();
-        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:"**"+( parsed.docType||"納品書")+"**を作成しました。", doc:parsed }]);
-        setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false }}));
+        // 自動保存開始
+        setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:true }}));
+        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:(parsed.docType||"納品書")+"を作成しました。自動保存中...", doc:parsed }]);
+        try {
+          const saved = await db.saveDocument(parsed, user);
+          const result = await autoRegisterAndStock({...parsed, id:saved.id}, user);
+          if (result.newCustomer || result.newProducts.length > 0) {
+            const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
+            setProducts(prods); setCustomers(custs);
+          } else if (result.stockLogs.length > 0) {
+            const prods = await db.getProducts(); setProducts(prods);
+          }
+          setHistory(h=>[saved,...h]);
+          setDocStates(s=>({...s,[msgId]:{ doc:saved, saved:true, saving:false }}));
+          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(saved.docType||"納品書")+"を自動保存しました ✓", doc:saved} : msg));
+          // 自動登録メッセージ
+          const autoMsgs = [];
+          if (result.newCustomer) autoMsgs.push("顧客「"+result.newCustomer+"」を登録");
+          if (result.newProducts.length>0) autoMsgs.push("商品「"+result.newProducts.join("・")+"」を登録");
+          if (result.stockLogs.length>0) autoMsgs.push("出庫: "+result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
+          if (autoMsgs.length>0) setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:"📋 "+autoMsgs.join("
+📋 ") }]);
+        } catch(saveErr) {
+          setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:false }}));
+          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(parsed.docType||"納品書")+"を作成しました（保存エラー: "+saveErr.message+"）"} : msg));
+        }
       } else {
         const apiMsgs = msgs.slice(-8).map(m=>({ role:m.role, content:m.text }));
         apiMsgs.push({ role:"user", content:text });
@@ -311,9 +335,9 @@ function ChatView({ co, products, customers, history, setHistory, user }) {
           <div style={{ maxWidth:"78%", background:isUser?N:"#f3f4f6", color:isUser?"#fff":"#111", borderRadius:isUser?"12px 12px 3px 12px":"12px 12px 12px 3px", padding:"9px 13px", fontSize:13, lineHeight:1.6, whiteSpace:"pre-wrap" }}>{msg.text}</div>
           {curDoc&&<DocCard doc={curDoc} co={co}
             onEdit={()=>setEditTarget({ msgId:msg.id, doc:curDoc })}
-            onPrint={()=>openPDF(curDoc,co)}
-            onSave={()=>saveDoc(msg.id,curDoc)}
+            onPrint={()=>generateAndDownloadPDF(curDoc,co)}
             saved={ds?.saved||false}
+            saving={ds?.saving||false}
           />}
         </div>;
       })}
@@ -391,7 +415,7 @@ function HistoryView({ history, setHistory, co, products }) {
       <div style={{ display:"flex", gap:8, marginTop:14 }}>
         <Btn variant="red" onClick={async()=>{ if(!confirm("削除しますか？"))return; await db.deleteDocument(sel.id); setHistory(h=>h.filter(x=>x.id!==sel.id)); setSel(null); }}>🗑 削除</Btn>
         <Btn onClick={()=>{ setEditTarget(sel); setSel(null); }}>✏️ 編集</Btn>
-        <Btn variant="primary" onClick={()=>openPDF(sel,co)} style={{ flex:1 }}>🖨 PDF再発行</Btn>
+        <Btn variant="primary" onClick={()=>generateAndDownloadPDF(sel,co)} style={{ flex:1 }}>📄 PDF再生成</Btn>
       </div>
     </Modal>}
     {editTarget&&<DocEditModal doc={editTarget} co={co} products={products||[]} onClose={()=>setEditTarget(null)} onSave={async(nd)=>{
