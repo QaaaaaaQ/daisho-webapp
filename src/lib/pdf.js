@@ -264,7 +264,7 @@ export async function generateAndDownloadPDF(doc, co) {
 
   // 隠しコンテナに HTML をレンダリング
   const wrap = document.createElement("div");
-  wrap.style.cssText = "position:fixed;left:-9999px;top:0;width:794px;background:#fff;z-index:-1";
+  wrap.style.cssText = "position:fixed;left:-9999px;top:0;width:794px;background:#fff;z-index:-1;padding:14mm 18mm;box-sizing:border-box;";
   wrap.innerHTML = html;
   document.body.appendChild(wrap);
 
