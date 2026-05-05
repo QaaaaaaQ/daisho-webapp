@@ -90,3 +90,60 @@ ALTER TABLE company_settings
 -- ロゴ画像カラム追加
 ALTER TABLE company_settings
   ADD COLUMN IF NOT EXISTS logo_img TEXT;
+
+-- =====================================================
+-- v2.0 追加テーブル（SQL Editorで実行）
+-- =====================================================
+
+-- 商品マスター
+CREATE TABLE IF NOT EXISTS products (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code        TEXT,
+  name        TEXT NOT NULL,
+  origin      TEXT,
+  unit        TEXT DEFAULT '個',
+  price       NUMERIC DEFAULT 0,
+  tax_rate    INTEGER DEFAULT 8,
+  case_qty    INTEGER,
+  qty_per_case INTEGER,
+  stock       NUMERIC DEFAULT 0,
+  note        TEXT,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth_products" ON products FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- 顧客マスター
+CREATE TABLE IF NOT EXISTS customers (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code        TEXT,
+  name        TEXT NOT NULL,
+  addr        TEXT,
+  contact     TEXT,
+  tel         TEXT,
+  bank        TEXT,
+  due_days    INTEGER DEFAULT 30,
+  note        TEXT,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth_customers" ON customers FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- 在庫移動履歴
+CREATE TABLE IF NOT EXISTS stock_logs (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id  UUID REFERENCES products(id),
+  change      NUMERIC NOT NULL,
+  reason      TEXT,
+  doc_id      UUID,
+  created_by  UUID REFERENCES auth.users(id),
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE stock_logs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth_stock_logs" ON stock_logs FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- documents.items の新フィールドはJSONBなので変更不要
+-- company_settings に印鑑・ロゴカラム追加（未実行の場合）
+ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS seal_img TEXT;
+ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS person_seal_img TEXT;
+ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS logo_img TEXT;
