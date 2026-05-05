@@ -274,8 +274,7 @@ function ChatView({ co, products, customers, history, setHistory, user }) {
           if (result.newCustomer) autoMsgs.push("顧客「"+result.newCustomer+"」を登録");
           if (result.newProducts.length>0) autoMsgs.push("商品「"+result.newProducts.join("・")+"」を登録");
           if (result.stockLogs.length>0) autoMsgs.push("出庫: "+result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
-          if (autoMsgs.length>0) setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:"📋 "+autoMsgs.join("
-📋 ") }]);
+          if (autoMsgs.length>0) setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:"📋 "+autoMsgs.join("\n📋 ") }]);
         } catch(saveErr) {
           setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:false }}));
           setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(parsed.docType||"納品書")+"を作成しました（保存エラー: "+saveErr.message+"）"} : msg));
@@ -305,8 +304,7 @@ function ChatView({ co, products, customers, history, setHistory, user }) {
         if (result.newCustomer) msgs.push("顧客「" + result.newCustomer + "」を登録しました");
         if (result.newProducts.length > 0) msgs.push("商品「" + result.newProducts.join("・") + "」を登録しました");
         if (result.stockLogs.length > 0) msgs.push("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
-        setAutoMsg(msgs.join("
-"));
+        setAutoMsg(msgs.join("\n"));
       } else if (result.stockLogs.length > 0) {
         const [prods] = await Promise.all([db.getProducts()]);
         setProducts(prods);
