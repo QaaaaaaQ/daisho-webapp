@@ -144,3 +144,83 @@ export async function signInWithGoogle() {
   const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
   if (error) throw error;
 }
+
+// ── 自動マスター登録 ──────────────────────────────────────────
+// 書類保存時に顧客・商品が未登録なら自動追加し、出庫を記録する
+export async function autoRegisterAndStock(doc, user) {
+  const results = { newCustomer: null, newProducts: [], stockLogs: [] };
+
+  // ① 顧客マスター自動登録
+  if (doc.customer) {
+    const { data: existing } = await supabase
+      .from("customers").select("id").eq("name", doc.customer).maybeSingle();
+    if (!existing) {
+      const { data: newCust } = await supabase.from("customers").insert([{
+        name: doc.customer,
+        addr: doc.toAddr || null,
+        contact: doc.toContact || null,
+      }]).select().single();
+      if (newCust) results.newCustomer = newCust.name;
+    }
+  }
+
+  // ② 商品マスター自動登録 + 出庫記録（納品書・請求書のみ）
+  if (doc.items && doc.items.length > 0) {
+    for (const item of doc.items) {
+      if (!item.name) continue;
+
+      // 商品マスターに存在するか確認
+      const { data: existingProd } = await supabase
+        .from("products").select("id, stock").eq("name", item.name).maybeSingle();
+
+      let productId = existingProd?.id;
+
+      // 未登録なら追加
+      if (!existingProd) {
+        const { data: newProd } = await supabase.from("products").insert([{
+          name: item.name,
+          origin: item.origin || null,
+          unit: item.unit || "個",
+          price: item.price || 0,
+          tax_rate: item.taxRate || 8,
+          stock: 0,
+        }]).select().single();
+        if (newProd) {
+          productId = newProd.id;
+          results.newProducts.push(newProd.name);
+        }
+      }
+
+      // 出庫記録（在庫を減らす）
+      if (productId && item.qty) {
+        const qty = Number(item.qty);
+        const currentStock = existingProd ? Number(existingProd.stock || 0) : 0;
+        // 在庫更新
+        await supabase.from("products").update({ stock: currentStock - qty }).eq("id", productId);
+        // 出庫ログ
+        const { data: log } = await supabase.from("stock_logs").insert([{
+          product_id: productId,
+          change: -qty,
+          reason: doc.docType + " 出庫: " + doc.customer + " " + doc.docNo,
+          doc_id: doc.id || null,
+          created_by: user.id,
+        }]).select().single();
+        if (log) results.stockLogs.push({ name: item.name, qty });
+      }
+    }
+  }
+
+  return results;
+}
+
+// ── 在庫ログ取得 ──────────────────────────────────────────────
+export async function getStockLogs(productId) {
+  const { data, error } = await supabase
+    .from("stock_logs")
+    .select("*")
+    .eq("product_id", productId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  return data || [];
+}

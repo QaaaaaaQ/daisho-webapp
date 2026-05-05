@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { supabase, db, aiParse, aiChat, signInWithGoogle } from "./lib/supabase";
+import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs } from "./lib/supabase";
 import { openPDF, calcTax } from "./lib/pdf";
 
 const tod = () => new Date().toISOString().slice(0, 10);
@@ -102,7 +102,7 @@ function ItemsEditor({ items, products, onChange }) {
 }
 
 // ── 書類直接作成フォーム ────────────────────────────────────
-function DirectDocForm({ co, products, customers, history, setHistory, user, onClose }) {
+function DirectDocForm({ co, products, customers, history, setHistory, setProducts, setCustomers, user, onClose }) {
   const emptyItem = { date:tod(), origin:"", name:"", qty:"", unit:"", price:"", amount:0, taxRate:8, taxIncluded:false, caseCount:"", qtyPerCase:"" };
   const [f, setF] = useState({ docType:"納品書", date:tod(), customer:"", subject:"", dueDate:"", bank:co.bankA||"", note:"", items:[emptyItem] });
   const [saving, setSaving] = useState(false);
@@ -120,7 +120,23 @@ function DirectDocForm({ co, products, customers, history, setHistory, user, onC
       const doc = { ...f, docNo: newDocNo(f.docType) };
       const saved = await db.saveDocument(doc, user);
       setHistory(h=>[saved,...h]);
+      // 自動マスター登録 + 出庫記録
+      const result = await autoRegisterAndStock({...doc, id: saved.id}, user);
+      if (result.newCustomer || result.newProducts.length > 0) {
+        const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
+        setProducts(prods); setCustomers(custs);
+      } else if (result.stockLogs.length > 0) {
+        const prods = await db.getProducts();
+        setProducts(prods);
+      }
       if (print) openPDF(saved, co);
+      // 結果メッセージ
+      const msgs = [];
+      if (result.newCustomer) msgs.push("顧客「" + result.newCustomer + "」を自動登録しました");
+      if (result.newProducts.length > 0) msgs.push("商品「" + result.newProducts.join("・") + "」を自動登録しました");
+      if (result.stockLogs.length > 0) msgs.push("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
+      if (msgs.length > 0) alert(msgs.join("
+"));
       onClose();
     } catch(e) { alert("エラー: "+e.message); }
     setSaving(false);
@@ -225,6 +241,7 @@ function ChatView({ co, products, customers, history, setHistory, user }) {
   const [docStates, setDocStates] = useState({});
   const [editTarget, setEditTarget] = useState(null);
   const [showDirect, setShowDirect] = useState(false);
+  const [autoMsg, setAutoMsg] = useState("");
   const bottomRef = useRef(null);
   const SUGG = ["5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書","4月分 TEN&A さざえ請求書","藤屋 まふぐ刺身6パック×6,600円 納品書"];
   useEffect(()=>{ bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [msgs, loading]);
@@ -255,6 +272,23 @@ function ChatView({ co, products, customers, history, setHistory, user }) {
       const saved = await db.saveDocument(doc, user);
       setHistory(h=>[saved,...h]);
       setDocStates(s=>({...s,[msgId]:{ ...s[msgId], saved:true }}));
+      // 自動マスター登録 + 出庫記録
+      const result = await autoRegisterAndStock({...doc, id: saved.id}, user);
+      // マスターデータを再読み込み
+      if (result.newCustomer || result.newProducts.length > 0) {
+        const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
+        setProducts(prods); setCustomers(custs);
+        const msgs = [];
+        if (result.newCustomer) msgs.push("顧客「" + result.newCustomer + "」を登録しました");
+        if (result.newProducts.length > 0) msgs.push("商品「" + result.newProducts.join("・") + "」を登録しました");
+        if (result.stockLogs.length > 0) msgs.push("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
+        setAutoMsg(msgs.join("
+"));
+      } else if (result.stockLogs.length > 0) {
+        const [prods] = await Promise.all([db.getProducts()]);
+        setProducts(prods);
+        setAutoMsg("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
+      }
     } catch(e) { alert("保存エラー: "+e.message); }
   };
   const handleEditSave = (newDoc) => {
@@ -284,6 +318,10 @@ function ChatView({ co, products, customers, history, setHistory, user }) {
         </div>;
       })}
       {loading&&<div style={{ display:"flex" }}><div style={{ background:"#f3f4f6", borderRadius:"12px 12px 12px 3px", padding:"9px 13px" }}><span style={{ display:"inline-flex", gap:4 }}>{[0,1,2].map(i=><span key={i} style={{ width:5, height:5, borderRadius:"50%", background:"#9ca3af", display:"inline-block", animation:"blink 1.2s infinite", animationDelay:`${i*0.2}s` }}/>)}</span></div></div>}
+      {autoMsg&&<div style={{ background:"#f0fdf4", border:"1px solid #86efac", borderRadius:8, padding:"9px 13px", fontSize:12, color:"#15803d", maxWidth:380 }}>
+        ✅ {autoMsg.split("\n").map((l,i)=><div key={i}>{l}</div>)}
+        <button onClick={()=>setAutoMsg("")} style={{ background:"none", border:"none", cursor:"pointer", color:"#6b7280", fontSize:11, marginTop:4 }}>閉じる</button>
+      </div>}
       <div ref={bottomRef}/>
     </div>
     {msgs.length<=1&&<div style={{ padding:"0 18px 8px", display:"flex", gap:6, flexWrap:"wrap" }}>
@@ -302,7 +340,7 @@ function ChatView({ co, products, customers, history, setHistory, user }) {
       </div>
     </div>
     {editTarget&&<DocEditModal doc={editTarget.doc} co={co} products={products} onClose={()=>setEditTarget(null)} onSave={handleEditSave}/>}
-    {showDirect&&<DirectDocForm co={co} products={products} customers={customers} history={history} setHistory={setHistory} user={user} onClose={()=>setShowDirect(false)}/>}
+    {showDirect&&<DirectDocForm co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user} onClose={()=>setShowDirect(false)}/>}
     <style>{`@keyframes blink{0%,80%,100%{opacity:0}40%{opacity:1}}`}</style>
   </div>;
 }
@@ -368,8 +406,16 @@ function HistoryView({ history, setHistory, co, products }) {
 function ProductsView({ products, setProducts }) {
   const [m, setM] = useState(null);
   const [f, setF] = useState({});
+  const [logs, setLogs] = useState([]);
+  const [logProduct, setLogProduct] = useState(null);
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
   const open = (p) => { setF(p||{ name:"", code:"", origin:"", unit:"kg", price:"", taxRate:8, caseQty:"", qtyPerCase:"", stock:0, note:"" }); setM("edit"); };
+  const openLogs = async (p) => {
+    setLogProduct(p);
+    const data = await getStockLogs(p.id);
+    setLogs(data);
+    setM("logs");
+  };
   const save = async () => {
     if (!f.name) { alert("商品名は必須です"); return; }
     await db.saveProduct(f);
@@ -398,12 +444,49 @@ function ProductsView({ products, setProducts }) {
             <td style={{ padding:"7px 10px", textAlign:"right" }}>{p.price?fm(p.price)+"円":""}</td>
             <td style={{ padding:"7px 10px" }}>{p.taxRate}%</td>
             <td style={{ padding:"7px 10px", textAlign:"right", color:Number(p.stock)<0?"#dc2626":"inherit", fontWeight:500 }}>{fm(p.stock)}</td>
-            <td style={{ padding:"7px 10px" }}><div style={{ display:"flex", gap:5 }}><Btn small onClick={()=>open(p)}>編集</Btn><Btn small variant="red" onClick={()=>del(p.id)}>削除</Btn></div></td>
+            <td style={{ padding:"7px 10px" }}><div style={{ display:"flex", gap:5 }}><Btn small onClick={()=>openLogs(p)}>📊 出庫履歴</Btn><Btn small onClick={()=>open(p)}>編集</Btn><Btn small variant="red" onClick={()=>del(p.id)}>削除</Btn></div></td>
           </tr>)}
           {products.length===0&&<tr><td colSpan={8} style={{ textAlign:"center", padding:32, color:"#9ca3af" }}>商品を登録してください</td></tr>}
         </tbody>
       </table>
     </div>
+    {m==="logs"&&logProduct&&<Modal title={"📊 出庫履歴: " + logProduct.name} onClose={()=>setM(null)} maxW={500}>
+      <div style={{ marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <span style={{ fontSize:13 }}>現在庫: <strong style={{ fontSize:16 }}>{fm(logProduct.stock)} {logProduct.unit}</strong></span>
+      </div>
+      <div style={{ maxHeight:360, overflowY:"auto" }}>
+        {logs.length===0&&<div style={{ textAlign:"center", padding:24, color:"#9ca3af", fontSize:13 }}>出庫記録がありません</div>}
+        {logs.map((log,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #f3f4f6", fontSize:13 }}>
+          <div>
+            <div style={{ color: log.change < 0 ? "#dc2626" : "#16a34a", fontWeight:600 }}>{log.change > 0 ? "+" : ""}{log.change} {logProduct.unit}</div>
+            <div style={{ fontSize:11, color:"#9ca3af" }}>{log.reason}</div>
+          </div>
+          <div style={{ fontSize:11, color:"#9ca3af", textAlign:"right" }}>{log.created_at?.slice(0,16).replace("T"," ")}</div>
+        </div>)}
+      </div>
+      <div style={{ marginTop:12, display:"flex", gap:8 }}>
+        <Field label="在庫を手動調整（±数量）">
+          <div style={{ display:"flex", gap:8 }}>
+            <input id="adj-qty" type="number" placeholder="例: -5 または +10" style={{ ...INP, flex:1 }}/>
+            <Btn small variant="primary" onClick={async()=>{
+              const v = Number(document.getElementById("adj-qty").value);
+              if (!v) return;
+              const reason = "手動調整";
+              const current = Number(logProduct.stock || 0);
+              await supabase.from("products").update({ stock: current + v }).eq("id", logProduct.id);
+              await supabase.from("stock_logs").insert([{ product_id: logProduct.id, change: v, reason, created_by: null }]);
+              const prods = await db.getProducts();
+              setProducts(prods);
+              const updated = prods.find(p=>p.id===logProduct.id);
+              if (updated) setLogProduct(updated);
+              const newLogs = await getStockLogs(logProduct.id);
+              setLogs(newLogs);
+              document.getElementById("adj-qty").value = "";
+            }}>調整</Btn>
+          </div>
+        </Field>
+      </div>
+    </Modal>}
     {m==="edit"&&<Modal title={f.id?"商品編集":"商品登録"} onClose={()=>setM(null)}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
         <Field label="商品コード"><input style={INP} value={f.code||""} onChange={(e)=>upd("code",e.target.value)} placeholder="P001"/></Field>
