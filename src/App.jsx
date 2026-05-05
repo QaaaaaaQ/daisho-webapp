@@ -233,7 +233,7 @@ function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
 }
 
 // ── Chat View ────────────────────────────────────────────────
-function ChatView({ co, products, customers, history, setHistory, user }) {
+function ChatView({ co, products, customers, history, setHistory, setProducts, setCustomers, user }) {
   const [msgs, setMsgs] = useState([{ role:"assistant", text:"こんにちは！\n自然な言葉で書類を作成できます。\n\n例：「5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書お願いします」" }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -757,7 +757,7 @@ export default function App() {
         </h2>
       </div>
       <div style={{ flex:1, overflow:"hidden" }}>
-        {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} user={user}/>}
+        {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
         {tab==="history"&&<HistoryView history={history} setHistory={setHistory} co={co} products={products}/>}
         {tab==="products"&&<ProductsView products={products} setProducts={setProducts}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
