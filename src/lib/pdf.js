@@ -38,18 +38,18 @@ function coBlock(co, date, no, typeLabel) {
       '<span style="font-size:32pt;font-weight:bold;color:#2a6a2a;letter-spacing:5px">DAISHO</span></div>';
 
   // 会社情報 + 角印を背景に
-  const sealBg = (co && co.sealImg)
-    ? '<img src="' + co.sealImg + '" style="position:absolute;top:0;right:-110px;width:100px;height:100px;object-fit:contain;opacity:0.60;pointer-events:none"/>'
+  var sealImg = (co && co.sealImg)
+    ? '<img src="' + co.sealImg + '" style="width:100px;height:100px;object-fit:contain;opacity:0.60;flex-shrink:0"/>'
     : '';
 
-  const coInfo = '<div style="position:relative;display:inline-block;padding:2mm 14mm 2mm 4mm;text-align:right">' +
-    sealBg +
-    '<div style="position:relative;font-size:11.5pt;font-weight:bold;margin-bottom:1mm">' + (co.name||"") + '</div>' +
-    '<div style="position:relative;font-size:8.5pt;line-height:1.8">' +
+  var coInfo = '<div style="display:flex;align-items:flex-start;gap:2mm;justify-content:flex-end">' +
+    '<div style="text-align:right;padding:2mm 0">' +
+    '<div style="font-size:11.5pt;font-weight:bold;margin-bottom:1mm">' + (co.name||"") + '</div>' +
+    '<div style="font-size:8.5pt;line-height:1.8">' +
     (co.manager||"") + '<br>' +
     (co.addr||"") + '<br>' +
     (co.tel||"") + '　' + (co.fax||"") +
-    '</div></div>';
+    '</div></div>' + sealImg + '</div>';
 
   return '<div style="text-align:right">' +
     '<table style="border-collapse:collapse;margin-left:auto;margin-bottom:1mm"><tbody>' +
@@ -230,8 +230,8 @@ export function buildReceiptHTML(doc, co) {
   const tax  = Math.round(amt - amt/1.08);
   const no   = doc.docNo || "REC-" + Date.now();
   const date = fd(doc.date) || new Date().toISOString().slice(0,10);
-  const sealBg = (co && co.sealImg)
-    ? '<img src="' + co.sealImg + '" style="position:absolute;top:0;right:-110px;width:100px;height:100px;object-fit:contain;opacity:0.60;pointer-events:none"/>'
+  var receiptSealImg = (co && co.sealImg)
+    ? '<img src="' + co.sealImg + '" style="width:100px;height:100px;object-fit:contain;opacity:0.60"/>'
     : '';
   return '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>領収書 ' + no + '</title>' + baseCSS() + '</head><body>' +
     '<h1>領　収　書</h1>' +
@@ -246,42 +246,43 @@ export function buildReceiptHTML(doc, co) {
     '</div>' +
     '<div style="font-size:9pt;margin:3mm 0">但し　' + (doc.description||"商品代として") + '</div>' +
     '<div style="font-size:9pt">上記金額を確かに領収いたしました。</div>' +
-    '<div style="text-align:right;margin-top:6mm">' +
-      '<div style="position:relative;display:inline-block;padding:2mm 4mm">' +
-        sealBg +
-        '<div style="position:relative;font-size:10pt;font-weight:bold">' + (co.name||"") + '</div>' +
-      '</div>' +
+    '<div style="display:flex;align-items:center;gap:3mm;justify-content:flex-end;margin-top:6mm">' +
+      '<div style="font-size:10pt;font-weight:bold">' + (co.name||"") + '</div>' +
+      receiptSealImg +
     '</div>' +
     '</body></html>';
 }
 
 // ─── jsPDF + html2canvas で直接PDF生成 ─────────────────────────
 export async function generateAndDownloadPDF(doc, co) {
-  const html =
+  var fullHtml =
     doc.docType === "請求書" ? buildInvoiceHTML(doc, co) :
     doc.docType === "領収書" ? buildReceiptHTML(doc, co) :
     buildDeliveryHTML(doc, co);
 
-  // iframe を使って完全なHTMLドキュメントとしてレンダリング
-  const iframe = document.createElement("iframe");
-  iframe.style.cssText = "position:fixed;left:-9999px;top:0;width:794px;height:1123px;border:none;";
-  document.body.appendChild(iframe);
+  // <style>タグと<body>の中身を抽出（body直接スタイル問題を回避）
+  var styleMatch = fullHtml.match(/<style[\s\S]*?<\/style>/i);
+  var bodyMatch  = fullHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  var styleStr   = styleMatch ? styleMatch[0] : "";
+  var bodyStr    = bodyMatch  ? bodyMatch[1]  : fullHtml;
+
+  // wrapにbodyのスタイルを直接適用
+  var wrap = document.createElement("div");
+  wrap.style.cssText = "position:fixed;left:-9999px;top:0;width:794px;background:#fff;z-index:-1;" +
+    "padding:45px 60px;" +
+    "box-sizing:border-box;" +
+    "font-family:Hiragino Sans,Yu Gothic UI,Meiryo,sans-serif;" +
+    "font-size:9pt;line-height:1.5;color:#111;";
+  wrap.innerHTML = styleStr + bodyStr;
+  document.body.appendChild(wrap);
 
   try {
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-    iframeDoc.open();
-    iframeDoc.write(html);
-    iframeDoc.close();
+    var html2canvasMod = await import("html2canvas");
+    var jsPDFMod = await import("jspdf");
+    var html2canvas = html2canvasMod.default;
+    var jsPDF = jsPDFMod.default;
 
-    // レンダリング完了を待つ
-    await new Promise(function(resolve) { setTimeout(resolve, 600); });
-
-    const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-      import("html2canvas"),
-      import("jspdf"),
-    ]);
-
-    const canvas = await html2canvas(iframeDoc.body, {
+    var canvas = await html2canvas(wrap, {
       scale: 2,
       useCORS: true,
       allowTaint: true,
@@ -289,11 +290,11 @@ export async function generateAndDownloadPDF(doc, co) {
       width: 794,
       windowWidth: 794,
     });
-    const imgData = canvas.toDataURL("image/png");
+    var imgData = canvas.toDataURL("image/png");
 
-    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const pageW = 210, pageH = 297;
-    const imgH = (canvas.height / canvas.width) * pageW;
+    var pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    var pageW = 210, pageH = 297;
+    var imgH = (canvas.height / canvas.width) * pageW;
 
     if (imgH <= pageH) {
       pdf.addImage(imgData, "PNG", 0, 0, pageW, imgH);
@@ -311,7 +312,7 @@ export async function generateAndDownloadPDF(doc, co) {
     var filename = (doc.customer || "書類") + "_" + doc.docNo + ".pdf";
     pdf.save(filename);
   } finally {
-    document.body.removeChild(iframe);
+    document.body.removeChild(wrap);
   }
 }
 
