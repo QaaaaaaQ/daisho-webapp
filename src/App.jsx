@@ -322,6 +322,14 @@ function SettingsView({ co, setCo }) {
       {f("振込先B（副）","bankB","三井住友銀行 神戸営業部 普通預金1663502")}
       <Btn variant="primary" onClick={save}>保存</Btn>
     </div>
+    <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:10, padding:20, marginBottom:16 }}>
+      <div style={{ fontWeight:600, fontSize:15, marginBottom:4, paddingBottom:10, borderBottom:"1px solid #f0f0f0" }}>🖼️ ロゴ画像（左上に表示）</div>
+      <div style={{ fontSize:12, color:"#6b7280", marginBottom:16, paddingTop:8 }}>
+        会社ロゴを設定するとサイドバーのDAISHO文字の代わりに表示されます。
+      </div>
+      <SealUploader label="会社ロゴ" value={c.logoImg||""} onChange={(v) => setC((x) => ({ ...x, logoImg:v }))}/>
+      <Btn variant="primary" onClick={save}>ロゴを保存</Btn>
+    </div>
     <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:10, padding:20 }}>
       <div style={{ fontWeight:600, fontSize:15, marginBottom:4, paddingBottom:10, borderBottom:"1px solid #f0f0f0" }}>🔴 印鑑設定（PDFに自動印刷）</div>
       <div style={{ fontSize:12, color:"#6b7280", marginBottom:16, paddingTop:8 }}>
@@ -406,9 +414,12 @@ export default function App() {
     <aside style={{ width:sideOpen?192:52, background:N, display:"flex", flexDirection:"column", flexShrink:0, transition:"width .2s", overflow:"hidden" }}>
       <div style={{ padding:"12px 10px", borderBottom:"0.5px solid rgba(255,255,255,0.1)", minWidth:192 }}>
         {sideOpen && <div>
-          <div style={{ border:"2px solid #2a6a2a", borderRadius:4, display:"inline-block", padding:"2px 8px", marginBottom:4 }}>
-            <span style={{ fontSize:13, fontWeight:"bold", color:"#4ade80", letterSpacing:2 }}>DAISHO</span>
-          </div>
+          {co.logoImg
+            ? <img src={co.logoImg} style={{ height:36, maxWidth:140, objectFit:"contain", display:"block", marginBottom:4 }} alt="ロゴ"/>
+            : <div style={{ border:"2px solid #2a6a2a", borderRadius:4, display:"inline-block", padding:"2px 8px", marginBottom:4 }}>
+                <span style={{ fontSize:13, fontWeight:"bold", color:"#4ade80", letterSpacing:2 }}>DAISHO</span>
+              </div>
+          }
           <div style={{ color:"rgba(255,255,255,0.35)", fontSize:10 }}>業務書類 AIシステム</div>
         </div>}
       </div>

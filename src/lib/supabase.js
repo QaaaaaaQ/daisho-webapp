@@ -113,6 +113,7 @@ export const db = {
       bankB:         data.bank_b,
       sealImg:       data.seal_img || "",
       personSealImg: data.person_seal_img || "",
+      logoImg:       data.logo_img || "",
       _id:           data.id,
     };
   },
@@ -135,6 +136,7 @@ export const db = {
       bank_b:          co.bankB,
       seal_img:        co.sealImg || null,
       person_seal_img: co.personSealImg || null,
+      logo_img:        co.logoImg || null,
     };
 
     if (existing) {

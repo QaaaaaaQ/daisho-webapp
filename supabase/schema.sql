@@ -86,3 +86,7 @@ CREATE TRIGGER trg_company_updated_at
 ALTER TABLE company_settings
   ADD COLUMN IF NOT EXISTS seal_img      TEXT,  -- 社印（base64）
   ADD COLUMN IF NOT EXISTS person_seal_img TEXT; -- 担当者印（base64）
+
+-- ロゴ画像カラム追加
+ALTER TABLE company_settings
+  ADD COLUMN IF NOT EXISTS logo_img TEXT;
