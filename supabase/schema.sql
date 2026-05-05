@@ -78,3 +78,11 @@ CREATE TRIGGER trg_documents_updated_at
 CREATE TRIGGER trg_company_updated_at
   BEFORE UPDATE ON company_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- =====================================================
+-- 印鑑画像カラム追加（既存DBへの追加用）
+-- Supabase SQL Editorで実行してください
+-- =====================================================
+ALTER TABLE company_settings
+  ADD COLUMN IF NOT EXISTS seal_img      TEXT,  -- 社印（base64）
+  ADD COLUMN IF NOT EXISTS person_seal_img TEXT; -- 担当者印（base64）

@@ -277,12 +277,40 @@ function HistoryView({ history, setHistory, co }) {
 }
 
 // ── Settings View ─────────────────────────────────────────────
+function SealUploader({ label, value, onChange }) {
+  const ref = useRef(null);
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { alert("2MB以下の画像を選択してください"); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => onChange(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+  return <div style={{ marginBottom:16 }}>
+    <label style={{ display:"block", fontSize:12, color:"#6b7280", marginBottom:8, fontWeight:500 }}>{label}</label>
+    <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+      <div style={{ width:72, height:72, border:"1px dashed #d1d5db", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", background:"#f9fafb", flexShrink:0, overflow:"hidden" }}>
+        {value
+          ? <img src={value} style={{ width:"100%", height:"100%", objectFit:"contain" }} alt="印鑑"/>
+          : <span style={{ fontSize:11, color:"#9ca3af", textAlign:"center", lineHeight:1.4 }}>未設定</span>}
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        <input ref={ref} type="file" accept="image/png,image/jpeg,image/gif" style={{ display:"none" }} onChange={handleFile}/>
+        <Btn small onClick={() => ref.current?.click()}>📁 画像を選択</Btn>
+        {value && <Btn small variant="red" onClick={() => onChange("")}>削除</Btn>}
+        <div style={{ fontSize:11, color:"#9ca3af" }}>PNG推奨 / 2MB以下<br/>背景透過PNGが綺麗です</div>
+      </div>
+    </div>
+  </div>;
+}
+
 function SettingsView({ co, setCo }) {
   const [c, setC] = useState({ ...co });
   const save = async () => { await db.saveCompany(c); setCo(c); alert("保存しました"); };
   const f = (label, key, placeholder) => <Field label={label}><input style={INP} value={c[key]||""} onChange={(e) => setC((x) => ({ ...x, [key]:e.target.value }))} placeholder={placeholder}/></Field>;
   return <div style={{ padding:24, maxWidth:560, overflowY:"auto", height:"100%" }}>
-    <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:10, padding:20 }}>
+    <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:10, padding:20, marginBottom:16 }}>
       <div style={{ fontWeight:600, fontSize:15, marginBottom:16, paddingBottom:10, borderBottom:"1px solid #f0f0f0" }}>🏢 自社情報（書類に印刷されます）</div>
       {f("会社名","name","株式会社 神戸大商")}
       {f("担当者名","manager","経理担当　秦")}
@@ -293,6 +321,18 @@ function SettingsView({ co, setCo }) {
       {f("振込先A（主）","bankA","りそな銀行 新大阪駅前支店 普通0436583")}
       {f("振込先B（副）","bankB","三井住友銀行 神戸営業部 普通預金1663502")}
       <Btn variant="primary" onClick={save}>保存</Btn>
+    </div>
+    <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:10, padding:20 }}>
+      <div style={{ fontWeight:600, fontSize:15, marginBottom:4, paddingBottom:10, borderBottom:"1px solid #f0f0f0" }}>🔴 印鑑設定（PDFに自動印刷）</div>
+      <div style={{ fontSize:12, color:"#6b7280", marginBottom:16, paddingTop:8 }}>
+        設定した印鑑画像は納品書・請求書・領収書のPDFに自動で入ります。
+      </div>
+      <SealUploader label="社印（丸印・角印）" value={c.sealImg||""} onChange={(v) => setC((x) => ({ ...x, sealImg:v }))}/>
+      <SealUploader label="担当者印（個人印・担当印）" value={c.personSealImg||""} onChange={(v) => setC((x) => ({ ...x, personSealImg:v }))}/>
+      <div style={{ background:"#fef9ec", border:"1px solid #fcd34d", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#92400e", marginBottom:16 }}>
+        ⚠️ 印鑑画像はSupabaseのDBに保存されます。社内限定のアクセスのみ可能です。
+      </div>
+      <Btn variant="primary" onClick={save}>印鑑を保存</Btn>
     </div>
   </div>;
 }

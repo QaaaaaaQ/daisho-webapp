@@ -211,4 +211,3 @@ daisho-webapp/
 ---
 
 *株式会社神戸大商 様専用 | Powered by Supabase + Anthropic Claude + Vercel*
-# daisho-webapp

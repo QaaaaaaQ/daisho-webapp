@@ -103,15 +103,17 @@ export const db = {
       .maybeSingle();
     if (!data) return null;
     return {
-      name:    data.name,
-      manager: data.manager,
-      addr:    data.addr,
-      tel:     data.tel,
-      fax:     data.fax,
-      regNo:   data.reg_no,
-      bankA:   data.bank_a,
-      bankB:   data.bank_b,
-      _id:     data.id,
+      name:          data.name,
+      manager:       data.manager,
+      addr:          data.addr,
+      tel:           data.tel,
+      fax:           data.fax,
+      regNo:         data.reg_no,
+      bankA:         data.bank_a,
+      bankB:         data.bank_b,
+      sealImg:       data.seal_img || "",
+      personSealImg: data.person_seal_img || "",
+      _id:           data.id,
     };
   },
 
@@ -123,14 +125,16 @@ export const db = {
       .maybeSingle();
 
     const payload = {
-      name:    co.name,
-      manager: co.manager,
-      addr:    co.addr,
-      tel:     co.tel,
-      fax:     co.fax,
-      reg_no:  co.regNo,
-      bank_a:  co.bankA,
-      bank_b:  co.bankB,
+      name:            co.name,
+      manager:         co.manager,
+      addr:            co.addr,
+      tel:             co.tel,
+      fax:             co.fax,
+      reg_no:          co.regNo,
+      bank_a:          co.bankA,
+      bank_b:          co.bankB,
+      seal_img:        co.sealImg || null,
+      person_seal_img: co.personSealImg || null,
     };
 
     if (existing) {

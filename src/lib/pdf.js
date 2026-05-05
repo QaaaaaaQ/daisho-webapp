@@ -9,6 +9,18 @@ const fd = (d) => {
   } catch { return String(d); }
 };
 
+
+// ── 印鑑HTML生成ヘルパー ─────────────────────────────────────
+function sealHtml(co) {
+  const company = co.sealImg
+    ? `<img src="${co.sealImg}" class="seal-img" alt="社印"/>`
+    : `<div class="seal">社印</div>`;
+  const person = co.personSealImg
+    ? `<img src="${co.personSealImg}" class="seal-img" alt="担当印"/>`
+    : `<div class="seal">担当</div>`;
+  return { company, person };
+}
+
 export function calcTax(items = []) {
   let s8 = 0, s10 = 0;
   (items || []).forEach((i) => {
@@ -57,8 +69,9 @@ table.main td{border:0.5px solid #ccc;padding:4px 6px;font-size:8.5pt}
 .ftr-l{color:#666;margin-bottom:1mm}
 .note-box{border:1px solid #bbb;padding:2mm 3mm;min-height:14mm;font-size:8.5pt;margin-top:3mm}
 .nlbl{font-size:8pt;color:#666;margin-bottom:1mm}
-.seals{display:flex;gap:6mm;margin-top:5mm}
+.seals{display:flex;gap:6mm;margin-top:5mm;align-items:flex-end}
 .seal{border:1px solid #bbb;width:18mm;height:18mm;display:flex;align-items:center;justify-content:center;font-size:7pt;color:#aaa}
+.seal-img{width:20mm;height:20mm;object-fit:contain;opacity:0.85}
 .pbtn{position:fixed;top:10px;right:10px;padding:8px 18px;background:#1a2744;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:11pt;font-family:inherit;z-index:99}
 @media print{.pbtn{display:none}}</style>`;
 }
@@ -125,7 +138,7 @@ ${coBlock(co, date, no, "納品書")}
 <p class="tnote">※印は軽減税率対象です。</p>
 ${taxBlock(tx)}
 <div class="note-box"><div class="nlbl">備考</div>${doc.note || ""}</div>
-<div class="seals"><div class="seal">担当</div><div class="seal">確認</div></div>
+`<div class="seals">${sealHtml(co).person}<div class="seal">確認</div>${sealHtml(co).company}</div>`
 </body></html>`;
 }
 
@@ -155,7 +168,7 @@ ${taxBlock(tx)}
 <div><div class="ftr-l">振込先</div><div style="line-height:1.7">${bank}</div></div>
 </div>
 <div class="note-box"><div class="nlbl">備考</div>${doc.note || ""}</div>
-<div class="seals"><div class="seal">担当</div><div class="seal">社印</div></div>
+`<div class="seals">${sealHtml(co).person}${sealHtml(co).company}</div>`
 </body></html>`;
 }
 
@@ -179,7 +192,7 @@ ${coBlock(co, date, no, "領収書")}
 <div style="font-size:9pt;margin:3mm 0">但し　${doc.description || "商品代として"}</div>
 <div style="font-size:9pt">上記金額を確かに領収いたしました。</div>
 <div style="text-align:right;margin-top:6mm;font-size:10pt;font-weight:bold">${co.name || ""}</div>
-<div class="seals"><div class="seal" style="width:22mm;height:22mm">収入印紙</div><div class="seal" style="width:22mm;height:22mm">社印</div></div>
+`<div class="seals"><div class="seal" style="width:22mm;height:22mm">収入印紙</div>${co.sealImg ? '<img src="' + co.sealImg + '" class="seal-img" style="width:22mm;height:22mm" alt="社印"/>' : '<div class="seal" style="width:22mm;height:22mm">社印</div>'}</div>`
 </body></html>`;
 }
 
