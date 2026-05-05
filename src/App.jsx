@@ -135,8 +135,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
       if (result.newCustomer) msgs.push("顧客「" + result.newCustomer + "」を自動登録しました");
       if (result.newProducts.length > 0) msgs.push("商品「" + result.newProducts.join("・") + "」を自動登録しました");
       if (result.stockLogs.length > 0) msgs.push("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
-      if (msgs.length > 0) alert(msgs.join("
-"));
+      if (msgs.length > 0) alert(msgs.join("\n"));
       onClose();
     } catch(e) { alert("エラー: "+e.message); }
     setSaving(false);
