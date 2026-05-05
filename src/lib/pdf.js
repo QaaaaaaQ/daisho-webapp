@@ -33,13 +33,13 @@ function coBlock(co, date, no, typeLabel) {
 
   // ロゴ: 2倍サイズ
   const logoHtml = (co && co.logoImg)
-    ? '<img src="' + co.logoImg + '" style="height:52px;max-width:220px;object-fit:contain;display:block;margin:3mm 0 2mm auto" alt="logo"/>'
-    : '<div style="border:3px solid #2a6a2a;border-radius:4px;display:inline-block;padding:2mm 7mm;margin:3mm 0 2mm 0">' +
-      '<span style="font-size:22pt;font-weight:bold;color:#2a6a2a;letter-spacing:4px">DAISHO</span></div>';
+    ? '<img src="' + co.logoImg + '" style="height:72px;max-width:280px;object-fit:contain;display:block;margin:3mm 0 3mm auto" alt="logo"/>'
+    : '<div style="border:4px solid #2a6a2a;border-radius:5px;display:inline-block;padding:3mm 9mm;margin:3mm 0 3mm 0">' +
+      '<span style="font-size:32pt;font-weight:bold;color:#2a6a2a;letter-spacing:5px">DAISHO</span></div>';
 
   // 会社情報 + 角印を背景に
   const sealBg = (co && co.sealImg)
-    ? '<img src="' + co.sealImg + '" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:85%;height:85%;object-fit:contain;opacity:0.16;pointer-events:none"/>'
+    ? '<img src="' + co.sealImg + '" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:110%;height:110%;object-fit:contain;opacity:0.62;pointer-events:none"/>'
     : '';
 
   const coInfo = '<div style="position:relative;display:inline-block;padding:2mm 4mm;text-align:right">' +
@@ -231,7 +231,7 @@ export function buildReceiptHTML(doc, co) {
   const no   = doc.docNo || "REC-" + Date.now();
   const date = fd(doc.date) || new Date().toISOString().slice(0,10);
   const sealBg = (co && co.sealImg)
-    ? '<img src="' + co.sealImg + '" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:85%;height:85%;object-fit:contain;opacity:0.16;pointer-events:none"/>'
+    ? '<img src="' + co.sealImg + '" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:110%;height:110%;object-fit:contain;opacity:0.62;pointer-events:none"/>'
     : '';
   return '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>領収書 ' + no + '</title>' + baseCSS() + '</head><body>' +
     '<h1>領　収　書</h1>' +
