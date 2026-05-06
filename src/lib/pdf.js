@@ -85,7 +85,7 @@ function taxBlock(tx) {
 function buildRows(items, hasDate) {
   items = items || [];
   const ROW_H = "height:16px";
-  const TD = 'style="border:0.5px solid #ccc;padding:3px 5px;' + ROW_H + ';font-size:8.5pt;white-space:nowrap;overflow:hidden"';
+  const TD = 'style="border:0.5px solid #ccc;padding:3px 5px;' + ROW_H + ';font-size:8.5pt;overflow:hidden"';
   const TDR = 'style="border:0.5px solid #ccc;padding:3px 6px;' + ROW_H + ';font-size:8.5pt;text-align:right"';
   const TDC = 'style="border:0.5px solid #ccc;padding:3px 5px;' + ROW_H + ';font-size:8.5pt;text-align:center"';
   const MIN = Math.max(items.length, 14);
@@ -118,20 +118,47 @@ function buildRows(items, hasDate) {
 }
 
 function tableHead(hasDate) {
-  const TH  = 'style="background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;white-space:nowrap"';
-  const THC = 'style="background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:center;white-space:nowrap"';
-  const THR = 'style="background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:right;white-space:nowrap"';
-  // 取引日: 22mm, 品名: auto(残り全部), 産地: 14mm, ケース数/入数/数量/単位: 各8mm, 単価: 16mm, 金額: 18mm
-  const dc = hasDate ? "<th " + TH  + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;width:22mm'>取引日</th>" : "";
-  return "<thead><tr>" + dc +
-    "<th " + TH  + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;'>品名</th>" +
-    "<th " + TH  + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;width:14mm'>産地</th>" +
-    "<th " + THC + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8pt;width:8mm'>CS</th>" +
-    "<th " + THC + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8pt;width:8mm'>入数</th>" +
-    "<th " + THC + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8pt;width:8mm'>数量</th>" +
-    "<th " + THC + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8pt;width:8mm'>単位</th>" +
-    "<th " + THR + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;width:16mm'>単価</th>" +
-    "<th " + THR + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;width:18mm'>明細金額</th>" +
+  const S  = "background:#1a2744;color:#fff;padding:4px 5px;font-weight:400;font-size:8.5pt;overflow:hidden";
+  const SC = S + ";text-align:center";
+  const SR = S + ";text-align:right";
+
+  // <colgroup> で幅を確実に固定（table-layout:fixed と組み合わせる）
+  // 取引日72px, 品名:auto, 産地50px, CS26px, 入数26px, 数量26px, 単位26px, 単価56px, 金額60px
+  var cols, dateTh = "";
+  if (hasDate) {
+    cols = "<colgroup>" +
+      "<col style='width:72px'/>" +   // 取引日
+      "<col/>" +                       // 品名 auto
+      "<col style='width:50px'/>" +   // 産地
+      "<col style='width:26px'/>" +   // CS
+      "<col style='width:26px'/>" +   // 入数
+      "<col style='width:26px'/>" +   // 数量
+      "<col style='width:26px'/>" +   // 単位
+      "<col style='width:56px'/>" +   // 単価
+      "<col style='width:60px'/>" +   // 金額
+      "</colgroup>";
+    dateTh = "<th style='" + S + "'>取引日</th>";
+  } else {
+    cols = "<colgroup>" +
+      "<col/>" +                       // 品名 auto
+      "<col style='width:50px'/>" +   // 産地
+      "<col style='width:26px'/>" +   // CS
+      "<col style='width:26px'/>" +   // 入数
+      "<col style='width:26px'/>" +   // 数量
+      "<col style='width:26px'/>" +   // 単位
+      "<col style='width:56px'/>" +   // 単価
+      "<col style='width:60px'/>" +   // 金額
+      "</colgroup>";
+  }
+  return cols + "<thead><tr>" + dateTh +
+    "<th style='" + S  + "'>品名</th>" +
+    "<th style='" + SC + "'>産地</th>" +
+    "<th style='" + SC + "'>CS</th>" +
+    "<th style='" + SC + "'>入数</th>" +
+    "<th style='" + SC + "'>数量</th>" +
+    "<th style='" + SC + "'>単位</th>" +
+    "<th style='" + SR + "'>単価</th>" +
+    "<th style='" + SR + "'>明細金額</th>" +
     "</tr></thead>";
 }
 
