@@ -47,6 +47,23 @@ export const db = {
     return normalizeDoc(data);
   },
   async deleteDocument(id) {
+    // 削除前に書類の品目を取得して在庫を戻す
+    const { data: doc } = await supabase.from("documents").select("items, doc_type, doc_no, customer").eq("id", id).single();
+    if (doc && doc.items && doc.items.length > 0 && (doc.doc_type === "納品書" || doc.doc_type === "請求書")) {
+      for (const item of doc.items) {
+        if (!item.name || !item.qty) continue;
+        const { data: prod } = await supabase.from("products").select("id, stock").eq("name", item.name).maybeSingle();
+        if (prod) {
+          const qty = Number(item.qty);
+          await supabase.from("products").update({ stock: Number(prod.stock || 0) + qty }).eq("id", prod.id);
+          await supabase.from("stock_logs").insert([{
+            product_id: prod.id, change: qty,
+            reason: "書類削除による在庫戻し: " + doc.customer + " " + doc.doc_no,
+            doc_id: id, created_by: null
+          }]);
+        }
+      }
+    }
     const { error } = await supabase.from("documents").delete().eq("id", id);
     if (error) throw error;
   },
@@ -74,13 +91,15 @@ export const db = {
     if (error) throw error;
     return (data || []).map(function(r) {
       return { id: r.id, code: r.code, name: r.name, origin: r.origin, unit: r.unit,
-        price: r.price, taxRate: r.tax_rate, caseQty: r.case_qty, qtyPerCase: r.qty_per_case,
+        price: r.price, purchasePrice: r.purchase_price,
+        taxRate: r.tax_rate, caseQty: r.case_qty, qtyPerCase: r.qty_per_case,
         stock: r.stock, note: r.note };
     });
   },
   async saveProduct(p) {
     const payload = { code: p.code, name: p.name, origin: p.origin, unit: p.unit,
-      price: p.price, tax_rate: p.taxRate, case_qty: p.caseQty, qty_per_case: p.qtyPerCase,
+      price: p.price, purchase_price: p.purchasePrice || null,
+      tax_rate: p.taxRate, case_qty: p.caseQty, qty_per_case: p.qtyPerCase,
       stock: p.stock || 0, note: p.note };
     if (p.id) {
       const { error } = await supabase.from("products").update(payload).eq("id", p.id);
@@ -91,6 +110,8 @@ export const db = {
     }
   },
   async deleteProduct(id) {
+    // 先に関連するstock_logsを削除（外部キー制約対策）
+    await supabase.from("stock_logs").delete().eq("product_id", id);
     const { error } = await supabase.from("products").delete().eq("id", id);
     if (error) throw error;
   },
@@ -143,6 +164,47 @@ export async function aiChat(messages, company) {
 export async function signInWithGoogle() {
   const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
   if (error) throw error;
+}
+
+// ── 入庫処理 ─────────────────────────────────────────────────
+export async function receiveStock(productId, productName, qty, supplier, note, userId) {
+  const { data: prod } = await supabase.from("products").select("id, stock").eq("id", productId).single();
+  if (!prod) throw new Error("商品が見つかりません");
+  const newStock = Number(prod.stock || 0) + Number(qty);
+  await supabase.from("products").update({ stock: newStock }).eq("id", productId);
+  await supabase.from("stock_logs").insert([{
+    product_id: productId,
+    change: Number(qty),
+    reason: "入庫" + (supplier ? ": " + supplier : "") + (note ? " " + note : ""),
+    created_by: userId || null,
+  }]);
+  return newStock;
+}
+
+// ── 重複商品マージ ────────────────────────────────────────────
+export async function mergeDuplicateProducts() {
+  const { data: prods } = await supabase.from("products").select("*");
+  if (!prods) return 0;
+  const seen = {};
+  let merged = 0;
+  for (const p of prods) {
+    const key = p.name + "|" + p.unit;
+    if (seen[key]) {
+      // 重複: stock を親にマージしてから削除
+      const parentId = seen[key];
+      const { data: parent } = await supabase.from("products").select("stock").eq("id", parentId).single();
+      const totalStock = Number(parent?.stock || 0) + Number(p.stock || 0);
+      await supabase.from("products").update({ stock: totalStock }).eq("id", parentId);
+      // stock_logsの参照を親に付け替え
+      await supabase.from("stock_logs").update({ product_id: parentId }).eq("product_id", p.id);
+      // 削除
+      await supabase.from("products").delete().eq("id", p.id);
+      merged++;
+    } else {
+      seen[key] = p.id;
+    }
+  }
+  return merged;
 }
 
 // ── 自動マスター登録 ──────────────────────────────────────────

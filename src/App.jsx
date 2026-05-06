@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs } from "./lib/supabase";
+import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs, receiveStock, mergeDuplicateProducts } from "./lib/supabase";
 import { openPDF, generateAndDownloadPDF, calcTax } from "./lib/pdf";
 
 const tod = () => new Date().toISOString().slice(0, 10);
@@ -410,7 +410,13 @@ function HistoryView({ history, setHistory, co, products }) {
       </div>)}
       {(sel.items||[]).length>0&&(()=>{ const tx=calcTax(sel.items); return <div style={{ textAlign:"right", marginTop:8, fontSize:13 }}><div style={{ color:"#6b7280" }}>消費税: {fm(tx.tax)}円</div><div style={{ fontWeight:600, fontSize:15 }}>合計: {fm(tx.total)}円</div></div>; })()}
       <div style={{ display:"flex", gap:8, marginTop:14 }}>
-        <Btn variant="red" onClick={async()=>{ if(!confirm("削除しますか？"))return; await db.deleteDocument(sel.id); setHistory(h=>h.filter(x=>x.id!==sel.id)); setSel(null); }}>🗑 削除</Btn>
+        <Btn variant="red" onClick={async()=>{ if(!confirm("削除しますか？\n※納品書・請求書の場合、在庫も自動で戻ります"))return;
+          try {
+            await db.deleteDocument(sel.id);
+            setHistory(h=>h.filter(x=>x.id!==sel.id));
+            const prods = await db.getProducts(); setProducts(prods);
+            setSel(null);
+          } catch(e) { alert("削除エラー: "+e.message); } }}>🗑 削除</Btn>
         <Btn onClick={()=>{ setEditTarget(sel); setSel(null); }}>✏️ 編集</Btn>
         <Btn variant="primary" onClick={()=>generateAndDownloadPDF(sel,co)} style={{ flex:1 }}>📄 PDF再生成</Btn>
       </div>
@@ -424,97 +430,172 @@ function HistoryView({ history, setHistory, co, products }) {
 }
 
 // ── Products Master ──────────────────────────────────────────
-function ProductsView({ products, setProducts }) {
+function ProductsView({ products, setProducts, user }) {
   const [m, setM] = useState(null);
   const [f, setF] = useState({});
   const [logs, setLogs] = useState([]);
   const [logProduct, setLogProduct] = useState(null);
+  const [sortKey, setSortKey] = useState("code");
+  const [sortDir, setSortDir] = useState(1);
+  const [receiving, setReceiving] = useState({ qty:"", supplier:"", note:"" });
+
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
-  const open = (p) => { setF(p||{ name:"", code:"", origin:"", unit:"kg", price:"", taxRate:8, caseQty:"", qtyPerCase:"", stock:0, note:"" }); setM("edit"); };
-  const openLogs = async (p) => {
-    setLogProduct(p);
-    const data = await getStockLogs(p.id);
-    setLogs(data);
-    setM("logs");
-  };
+  const updR = (k,v) => setReceiving(x=>({...x,[k]:v}));
+
+  const sort = (key) => { if(sortKey===key) setSortDir(d=>-d); else { setSortKey(key); setSortDir(1); } };
+  const sorted = [...products].sort((a,b)=>{
+    const av = a[sortKey]||"", bv = b[sortKey]||"";
+    if(typeof av==="number"||!isNaN(Number(av))) return (Number(av)-Number(bv))*sortDir;
+    return String(av).localeCompare(String(bv),"ja")*sortDir;
+  });
+
+  const open = (p) => { setF(p||{ name:"", code:"", origin:"", unit:"kg", price:"", purchasePrice:"", taxRate:8, caseQty:"", qtyPerCase:"", stock:0, note:"" }); setM("edit"); };
+  const openLogs = async (p) => { setLogProduct(p); const data=await getStockLogs(p.id); setLogs(data); setM("logs"); };
+
   const save = async () => {
     if (!f.name) { alert("商品名は必須です"); return; }
-    await db.saveProduct(f);
-    const next = await db.getProducts();
-    setProducts(next); setM(null);
+    try { await db.saveProduct(f); const next=await db.getProducts(); setProducts(next); setM(null); }
+    catch(e) { alert("保存エラー: "+e.message); }
   };
+
   const del = async (id) => {
     if (!confirm("削除しますか？")) return;
-    await db.deleteProduct(id);
-    setProducts(products.filter(p=>p.id!==id));
+    try { await db.deleteProduct(id); setProducts(products.filter(p=>p.id!==id)); }
+    catch(e) { alert("削除エラー: "+e.message); }
   };
+
+  const doMerge = async () => {
+    const count = await mergeDuplicateProducts();
+    const next = await db.getProducts();
+    setProducts(next);
+    alert(count > 0 ? count+"件の重複商品をマージしました" : "重複はありませんでした");
+  };
+
+  const doReceive = async () => {
+    if (!logProduct || !receiving.qty) { alert("数量を入力してください"); return; }
+    try {
+      const newStock = await receiveStock(logProduct.id, logProduct.name, Number(receiving.qty), receiving.supplier, receiving.note, user?.id);
+      const prods = await db.getProducts();
+      setProducts(prods);
+      const updated = prods.find(p=>p.id===logProduct.id);
+      if (updated) setLogProduct(updated);
+      const newLogs = await getStockLogs(logProduct.id);
+      setLogs(newLogs);
+      setReceiving({ qty:"", supplier:"", note:"" });
+      alert("入庫完了。現在庫: "+newStock+" "+logProduct.unit);
+    } catch(e) { alert("入庫エラー: "+e.message); }
+  };
+
+  const SortTh = ({k, label}) => <th onClick={()=>sort(k)} style={{ padding:"7px 10px", fontWeight:400, textAlign:"left", cursor:"pointer", whiteSpace:"nowrap", userSelect:"none" }}>
+    {label}{sortKey===k ? (sortDir===1?"▲":"▼") : ""}
+  </th>;
+
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
-    <div style={{ padding:"12px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-      <span style={{ fontWeight:500 }}>商品マスター（{products.length}件）</span>
-      <Btn variant="primary" small onClick={()=>open(null)}>＋ 新規登録</Btn>
+    <div style={{ padding:"10px 16px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+      <span style={{ fontWeight:500, fontSize:14 }}>商品マスター（{products.length}件）</span>
+      <span style={{ fontSize:11, color:"#9ca3af" }}>▲▼ヘッダークリックで並び替え</span>
+      <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
+        <Btn small onClick={doMerge} style={{ background:"#f59e0b", color:"#fff", border:"none" }}>🔀 重複マージ</Btn>
+        <Btn variant="primary" small onClick={()=>open(null)}>＋ 新規登録</Btn>
+      </div>
     </div>
-    <div style={{ flex:1, overflowY:"auto" }}>
-      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-        <thead><tr style={{ background:N, color:"#fff" }}>{["コード","商品名","産地","単位","単価","税率","在庫",""].map((h,i)=><th key={i} style={{ padding:"7px 10px", fontWeight:400, textAlign:"left" }}>{h}</th>)}</tr></thead>
+    <div style={{ flex:1, overflowX:"auto", overflowY:"auto" }}>
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+        <thead><tr style={{ background:N, color:"#fff" }}>
+          <SortTh k="code" label="コード"/>
+          <SortTh k="name" label="商品名"/>
+          <SortTh k="origin" label="産地"/>
+          <SortTh k="unit" label="単位"/>
+          <SortTh k="purchasePrice" label="仕入単価"/>
+          <SortTh k="price" label="販売単価"/>
+          <th style={{ padding:"7px 10px", fontWeight:400 }}>利益率</th>
+          <SortTh k="taxRate" label="税率"/>
+          <SortTh k="stock" label="在庫"/>
+          <th style={{ padding:"7px 10px", fontWeight:400 }}>操作</th>
+        </tr></thead>
         <tbody>
-          {products.map((p,i)=><tr key={p.id} style={{ background:i%2===0?"#fff":"#f9fafb", borderBottom:"1px solid #f0f0f0" }}>
-            <td style={{ padding:"7px 10px", color:"#9ca3af" }}>{p.code}</td>
-            <td style={{ padding:"7px 10px", fontWeight:500 }}>{p.name}</td>
-            <td style={{ padding:"7px 10px" }}>{p.origin}</td>
-            <td style={{ padding:"7px 10px" }}>{p.unit}</td>
-            <td style={{ padding:"7px 10px", textAlign:"right" }}>{p.price?fm(p.price)+"円":""}</td>
-            <td style={{ padding:"7px 10px" }}>{p.taxRate}%</td>
-            <td style={{ padding:"7px 10px", textAlign:"right", color:Number(p.stock)<0?"#dc2626":"inherit", fontWeight:500 }}>{fm(p.stock)}</td>
-            <td style={{ padding:"7px 10px" }}><div style={{ display:"flex", gap:5 }}><Btn small onClick={()=>openLogs(p)}>📊 出庫履歴</Btn><Btn small onClick={()=>open(p)}>編集</Btn><Btn small variant="red" onClick={()=>del(p.id)}>削除</Btn></div></td>
-          </tr>)}
-          {products.length===0&&<tr><td colSpan={8} style={{ textAlign:"center", padding:32, color:"#9ca3af" }}>商品を登録してください</td></tr>}
+          {sorted.map((p,i)=>{
+            const margin = (p.purchasePrice && p.price && Number(p.price)>0)
+              ? Math.round((1 - Number(p.purchasePrice)/Number(p.price))*100) : null;
+            return <tr key={p.id} style={{ background:i%2===0?"#fff":"#f9fafb", borderBottom:"1px solid #f0f0f0" }}>
+              <td style={{ padding:"6px 10px", color:"#9ca3af" }}>{p.code}</td>
+              <td style={{ padding:"6px 10px", fontWeight:500 }}>{p.name}</td>
+              <td style={{ padding:"6px 10px" }}>{p.origin}</td>
+              <td style={{ padding:"6px 10px" }}>{p.unit}</td>
+              <td style={{ padding:"6px 10px", textAlign:"right", color:"#6b7280" }}>{p.purchasePrice?fm(p.purchasePrice)+"円":"-"}</td>
+              <td style={{ padding:"6px 10px", textAlign:"right" }}>{p.price?fm(p.price)+"円":"-"}</td>
+              <td style={{ padding:"6px 10px", textAlign:"right", color:margin!==null?(margin>=20?"#16a34a":margin>=0?"#d97706":"#dc2626"):"#9ca3af", fontWeight:500 }}>
+                {margin!==null ? margin+"%" : "-"}
+              </td>
+              <td style={{ padding:"6px 10px" }}>{p.taxRate}%</td>
+              <td style={{ padding:"6px 10px", textAlign:"right", color:Number(p.stock)<0?"#dc2626":"inherit", fontWeight:500 }}>{fm(p.stock)}</td>
+              <td style={{ padding:"6px 8px" }}>
+                <div style={{ display:"flex", gap:4, flexWrap:"nowrap" }}>
+                  <Btn small onClick={()=>openLogs(p)}>📊 履歴/入庫</Btn>
+                  <Btn small onClick={()=>open(p)}>編集</Btn>
+                  <Btn small variant="red" onClick={()=>del(p.id)}>削除</Btn>
+                </div>
+              </td>
+            </tr>;
+          })}
+          {products.length===0&&<tr><td colSpan={10} style={{ textAlign:"center", padding:32, color:"#9ca3af" }}>商品を登録してください</td></tr>}
         </tbody>
       </table>
     </div>
-    {m==="logs"&&logProduct&&<Modal title={"📊 出庫履歴: " + logProduct.name} onClose={()=>setM(null)} maxW={500}>
-      <div style={{ marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <span style={{ fontSize:13 }}>現在庫: <strong style={{ fontSize:16 }}>{fm(logProduct.stock)} {logProduct.unit}</strong></span>
+
+    {m==="logs"&&logProduct&&<Modal title={"📦 履歴・入庫: " + logProduct.name} onClose={()=>setM(null)} maxW={540}>
+      <div style={{ marginBottom:12, display:"flex", justifyContent:"space-between" }}>
+        <span style={{ fontSize:14 }}>現在庫: <strong style={{ fontSize:18, color:Number(logProduct.stock)<0?"#dc2626":"#111" }}>{fm(logProduct.stock)} {logProduct.unit}</strong></span>
       </div>
-      <div style={{ maxHeight:360, overflowY:"auto" }}>
-        {logs.length===0&&<div style={{ textAlign:"center", padding:24, color:"#9ca3af", fontSize:13 }}>出庫記録がありません</div>}
-        {logs.map((log,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #f3f4f6", fontSize:13 }}>
+      <div style={{ background:"#f0fdf4", border:"1px solid #86efac", borderRadius:8, padding:12, marginBottom:14 }}>
+        <div style={{ fontWeight:500, fontSize:13, marginBottom:8 }}>📥 入庫登録</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+          <Field label="入庫数量 *"><input style={INP} type="number" value={receiving.qty} onChange={(e)=>updR("qty",e.target.value)} placeholder="例: 50"/></Field>
+          <Field label="仕入先"><input style={INP} value={receiving.supplier} onChange={(e)=>updR("supplier",e.target.value)} placeholder="〇〇水産"/></Field>
+        </div>
+        <Field label="備考"><input style={INP} value={receiving.note} onChange={(e)=>updR("note",e.target.value)} placeholder="任意"/></Field>
+        <Btn variant="green" onClick={doReceive} style={{ marginTop:8 }}>✅ 入庫確定</Btn>
+      </div>
+      <div style={{ fontWeight:500, fontSize:12, color:"#6b7280", marginBottom:6 }}>入出庫履歴</div>
+      <div style={{ maxHeight:260, overflowY:"auto", border:"1px solid #f0f0f0", borderRadius:6 }}>
+        {logs.length===0&&<div style={{ textAlign:"center", padding:20, color:"#9ca3af", fontSize:13 }}>履歴がありません</div>}
+        {logs.map((log,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"7px 10px", borderBottom:"1px solid #f9f9f9", fontSize:12 }}>
           <div>
-            <div style={{ color: log.change < 0 ? "#dc2626" : "#16a34a", fontWeight:600 }}>{log.change > 0 ? "+" : ""}{log.change} {logProduct.unit}</div>
-            <div style={{ fontSize:11, color:"#9ca3af" }}>{log.reason}</div>
+            <span style={{ color:log.change<0?"#dc2626":"#16a34a", fontWeight:600 }}>{log.change>0?"+":""}{log.change} {logProduct.unit}</span>
+            <span style={{ color:"#9ca3af", marginLeft:8 }}>{log.reason}</span>
           </div>
-          <div style={{ fontSize:11, color:"#9ca3af", textAlign:"right" }}>{log.created_at?.slice(0,16).replace("T"," ")}</div>
+          <span style={{ color:"#9ca3af" }}>{log.created_at?.slice(0,16).replace("T"," ")}</span>
         </div>)}
       </div>
-      <div style={{ marginTop:12, display:"flex", gap:8 }}>
-        <Field label="在庫を手動調整（±数量）">
+      <div style={{ marginTop:10 }}>
+        <Field label="手動調整（±数量）">
           <div style={{ display:"flex", gap:8 }}>
             <input id="adj-qty" type="number" placeholder="例: -5 または +10" style={{ ...INP, flex:1 }}/>
             <Btn small variant="primary" onClick={async()=>{
               const v = Number(document.getElementById("adj-qty").value);
               if (!v) return;
-              const reason = "手動調整";
-              const current = Number(logProduct.stock || 0);
-              await supabase.from("products").update({ stock: current + v }).eq("id", logProduct.id);
-              await supabase.from("stock_logs").insert([{ product_id: logProduct.id, change: v, reason, created_by: null }]);
-              const prods = await db.getProducts();
-              setProducts(prods);
+              const current = Number(logProduct.stock||0);
+              await supabase.from("products").update({ stock: current+v }).eq("id", logProduct.id);
+              await supabase.from("stock_logs").insert([{ product_id:logProduct.id, change:v, reason:"手動調整", created_by:null }]);
+              const prods = await db.getProducts(); setProducts(prods);
               const updated = prods.find(p=>p.id===logProduct.id);
-              if (updated) setLogProduct(updated);
-              const newLogs = await getStockLogs(logProduct.id);
-              setLogs(newLogs);
-              document.getElementById("adj-qty").value = "";
+              if(updated) setLogProduct(updated);
+              setLogs(await getStockLogs(logProduct.id));
+              document.getElementById("adj-qty").value="";
             }}>調整</Btn>
           </div>
         </Field>
       </div>
     </Modal>}
+
     {m==="edit"&&<Modal title={f.id?"商品編集":"商品登録"} onClose={()=>setM(null)}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
         <Field label="商品コード"><input style={INP} value={f.code||""} onChange={(e)=>upd("code",e.target.value)} placeholder="P001"/></Field>
         <Field label="商品名 *"><input style={INP} value={f.name||""} onChange={(e)=>upd("name",e.target.value)} placeholder="韓国産養殖活アワビ"/></Field>
         <Field label="産地"><input style={INP} value={f.origin||""} onChange={(e)=>upd("origin",e.target.value)} placeholder="韓国産"/></Field>
         <Field label="単位"><input style={INP} value={f.unit||""} onChange={(e)=>upd("unit",e.target.value)} placeholder="kg"/></Field>
-        <Field label="標準単価（円）"><input style={INP} type="number" value={f.price||""} onChange={(e)=>upd("price",e.target.value)}/></Field>
+        <Field label="仕入単価（円）"><input style={INP} type="number" value={f.purchasePrice||""} onChange={(e)=>upd("purchasePrice",e.target.value)}/></Field>
+        <Field label="販売単価（円）"><input style={INP} type="number" value={f.price||""} onChange={(e)=>upd("price",e.target.value)}/></Field>
         <Field label="税率"><select style={SEL} value={f.taxRate||8} onChange={(e)=>upd("taxRate",Number(e.target.value))}><option value={8}>8%（軽減税率）</option><option value={10}>10%（標準税率）</option></select></Field>
         <Field label="ケース入数"><input style={INP} type="number" value={f.qtyPerCase||""} onChange={(e)=>upd("qtyPerCase",e.target.value)}/></Field>
         <Field label="現在庫"><input style={INP} type="number" value={f.stock||0} onChange={(e)=>upd("stock",e.target.value)}/></Field>
@@ -759,7 +840,7 @@ export default function App() {
       <div style={{ flex:1, overflow:"hidden" }}>
         {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
         {tab==="history"&&<HistoryView history={history} setHistory={setHistory} co={co} products={products}/>}
-        {tab==="products"&&<ProductsView products={products} setProducts={setProducts}/>}
+        {tab==="products"&&<ProductsView products={products} setProducts={setProducts} user={user}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}
       </div>

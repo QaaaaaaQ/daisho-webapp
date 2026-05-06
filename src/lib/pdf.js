@@ -37,20 +37,19 @@ function coBlock(co, date, no, typeLabel) {
     : '<div style="border:4px solid #2a6a2a;border-radius:5px;display:inline-block;padding:3mm 9mm;margin:3mm 0 3mm 0">' +
       '<span style="font-size:32pt;font-weight:bold;color:#2a6a2a;letter-spacing:5px">DAISHO</span></div>';
 
-// 会社情報 + 角印を背景に（絶対配置でテキストの背後に重ねる）
+  // 会社情報 + 角印を背景に
   var sealImg = (co && co.sealImg)
-    ? '<img src="' + co.sealImg + '" style="position:absolute; right:2mm; top:2mm; width:80px; height:80px; object-fit:contain; opacity:0.60; z-index:0;"/>'
+    ? '<img src="' + co.sealImg + '" style="width:100px;height:100px;object-fit:contain;opacity:0.60;flex-shrink:0"/>'
     : '';
 
-  var coInfo = '<div style="position:relative; text-align:right; padding:2mm 0;">' +
-    sealImg +
-    '<div style="position:relative; z-index:1;">' +
+  var coInfo = '<div style="display:flex;align-items:flex-start;gap:2mm;justify-content:flex-end">' +
+    '<div style="text-align:right;padding:2mm 0">' +
     '<div style="font-size:11.5pt;font-weight:bold;margin-bottom:1mm">' + (co.name||"") + '</div>' +
     '<div style="font-size:8.5pt;line-height:1.8">' +
     (co.manager||"") + '<br>' +
     (co.addr||"") + '<br>' +
     (co.tel||"") + '　' + (co.fax||"") +
-    '</div></div></div>';
+    '</div></div>' + sealImg + '</div>';
 
   return '<div style="text-align:right">' +
     '<table style="border-collapse:collapse;margin-left:auto;margin-bottom:1mm"><tbody>' +

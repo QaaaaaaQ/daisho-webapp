@@ -147,3 +147,6 @@ CREATE POLICY "auth_stock_logs" ON stock_logs FOR ALL TO authenticated USING (tr
 ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS seal_img TEXT;
 ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS person_seal_img TEXT;
 ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS logo_img TEXT;
+
+-- 仕入単価カラム追加（SQL Editorで実行）
+ALTER TABLE products ADD COLUMN IF NOT EXISTS purchase_price NUMERIC;
