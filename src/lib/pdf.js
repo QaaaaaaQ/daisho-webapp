@@ -129,11 +129,11 @@ function tableHead(hasDate) {
     cols = "<colgroup>" +
       "<col style='width:72px'/>" +   // 取引日
       "<col/>" +                       // 品名 auto
-      "<col style='width:50px'/>" +   // 産地
-      "<col style='width:26px'/>" +   // CS
-      "<col style='width:26px'/>" +   // 入数
-      "<col style='width:26px'/>" +   // 数量
-      "<col style='width:26px'/>" +   // 単位
+      "<col style='width:60px'/>" +   // 産地
+      "<col style='width:50px'/>" +   // CS
+      "<col style='width:50px'/>" +   // 入数
+      "<col style='width:50px'/>" +   // 数量
+      "<col style='width:50px'/>" +   // 単位
       "<col style='width:56px'/>" +   // 単価
       "<col style='width:60px'/>" +   // 金額
       "</colgroup>";
@@ -141,11 +141,11 @@ function tableHead(hasDate) {
   } else {
     cols = "<colgroup>" +
       "<col/>" +                       // 品名 auto
-      "<col style='width:50px'/>" +   // 産地
-      "<col style='width:26px'/>" +   // CS
-      "<col style='width:26px'/>" +   // 入数
-      "<col style='width:26px'/>" +   // 数量
-      "<col style='width:26px'/>" +   // 単位
+      "<col style='width:60px'/>" +   // 産地
+      "<col style='width:50px'/>" +   // CS
+      "<col style='width:50px'/>" +   // 入数
+      "<col style='width:50px'/>" +   // 数量
+      "<col style='width:50px'/>" +   // 単位
       "<col style='width:56px'/>" +   // 単価
       "<col style='width:60px'/>" +   // 金額
       "</colgroup>";
