@@ -65,19 +65,19 @@ function ItemsEditor({ items, products, onChange }) {
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, minWidth:780 }}>
         <thead>
           <tr style={{ background:N, color:"#fff" }}>
-            {["日付","産地","品名","ケース","入数","数量","単位","単価","金額","税率","税種",""].map((h,i)=><th key={i} style={{ padding:"5px 6px", fontWeight:400, whiteSpace:"nowrap" }}>{h}</th>)}
+            {["日付","品名","産地","ケース","入数","数量","単位","単価","金額","税率","税種",""].map((h,i)=><th key={i} style={{ padding:"5px 6px", fontWeight:400, whiteSpace:"nowrap" }}>{h}</th>)}
           </tr>
         </thead>
         <tbody>
           {items.map((it,i)=><tr key={i} style={{ borderBottom:"1px solid #f0f0f0" }}>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:110, fontSize:11, padding:"4px 5px" }} type="date" value={it.date||""} onChange={(e)=>upd(i,"date",e.target.value)}/></td>
-            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:70, fontSize:11, padding:"4px 5px" }} value={it.origin||""} onChange={(e)=>upd(i,"origin",e.target.value)} placeholder="韓国産"/></td>
             <td style={{ padding:"3px 4px" }}>
               <select style={{ ...SEL, width:130, fontSize:11, padding:"4px 5px" }} value={it.name} onChange={(e)=>{ const p=products.find(x=>x.name===e.target.value); if(p)fill(i,p); else upd(i,"name",e.target.value); }}>
                 <option value="">品名選択/入力</option>
                 {products.map(p=><option key={p.id} value={p.name}>{p.name}</option>)}
               </select>
             </td>
+            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:70, fontSize:11, padding:"4px 5px" }} value={it.origin||""} onChange={(e)=>upd(i,"origin",e.target.value)} placeholder="韓国産"/></td>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:60, fontSize:11, padding:"4px 5px" }} type="number" value={it.caseCount||""} onChange={(e)=>upd(i,"caseCount",e.target.value)} placeholder="ケース"/></td>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:50, fontSize:11, padding:"4px 5px" }} type="number" value={it.qtyPerCase||""} onChange={(e)=>upd(i,"qtyPerCase",e.target.value)} placeholder="入数"/></td>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:60, fontSize:11, padding:"4px 5px" }} type="number" value={it.qty||""} onChange={(e)=>upd(i,"qty",e.target.value)}/></td>

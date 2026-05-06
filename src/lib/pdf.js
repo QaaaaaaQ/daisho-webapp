@@ -96,8 +96,8 @@ function buildRows(items, hasDate) {
       const mark = Number(it.taxRate) === 10 ? "" : " ※";
       const dc = hasDate ? "<td " + TD + ">" + (fd(it.date)||"") + "</td>" : "";
       h += "<tr>" + dc +
-        "<td " + TD + ">" + (it.origin||"") + "</td>" +
         "<td " + TD + ">" + (it.name||"") + mark + "</td>" +
+        "<td " + TD + " style='border:0.5px solid #ccc;padding:3px 4px;height:16px;font-size:7.5pt;color:#666'>" + (it.origin||"") + "</td>" +
         "<td " + TDC + ">" + (it.caseCount||"") + "</td>" +
         "<td " + TDC + ">" + (it.qtyPerCase||"") + "</td>" +
         "<td " + TDC + ">" + (it.qty||"") + "</td>" +
@@ -107,7 +107,8 @@ function buildRows(items, hasDate) {
     } else {
       const dc = hasDate ? "<td " + TD + "></td>" : "";
       h += "<tr>" + dc +
-        "<td " + TD + "></td><td " + TD + "></td>" +
+        "<td " + TD + "></td>" +
+        "<td style='border:0.5px solid #ccc;height:16px'></td>" +
         "<td " + TDC + "></td><td " + TDC + "></td>" +
         "<td " + TDC + "></td><td " + TDC + "></td>" +
         "<td " + TDR + "></td><td " + TDR + "></td></tr>";
@@ -117,17 +118,20 @@ function buildRows(items, hasDate) {
 }
 
 function tableHead(hasDate) {
-  const TH = 'style="background:#1a2744;color:#fff;padding:5px 5px;font-weight:400;font-size:8.5pt;white-space:nowrap"';
-  const dc = hasDate ? "<th " + TH + ">取引日</th>" : "";
+  const TH  = 'style="background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;white-space:nowrap"';
+  const THC = 'style="background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:center;white-space:nowrap"';
+  const THR = 'style="background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:right;white-space:nowrap"';
+  // 取引日: 22mm, 品名: auto(残り全部), 産地: 14mm, ケース数/入数/数量/単位: 各8mm, 単価: 16mm, 金額: 18mm
+  const dc = hasDate ? "<th " + TH  + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;width:22mm'>取引日</th>" : "";
   return "<thead><tr>" + dc +
-    "<th " + TH + ">産地</th>" +
-    "<th " + TH + ">品名</th>" +
-    "<th " + TH + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:center'>ケース数</th>" +
-    "<th " + TH + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:center'>入数</th>" +
-    "<th " + TH + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:center'>数量</th>" +
-    "<th " + TH + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:center'>単位</th>" +
-    "<th " + TH + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:right'>単価</th>" +
-    "<th " + TH + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;text-align:right'>明細金額</th>" +
+    "<th " + TH  + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;'>品名</th>" +
+    "<th " + TH  + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;width:14mm'>産地</th>" +
+    "<th " + THC + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8pt;width:8mm'>CS</th>" +
+    "<th " + THC + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8pt;width:8mm'>入数</th>" +
+    "<th " + THC + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8pt;width:8mm'>数量</th>" +
+    "<th " + THC + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8pt;width:8mm'>単位</th>" +
+    "<th " + THR + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;width:16mm'>単価</th>" +
+    "<th " + THR + " style='background:#1a2744;color:#fff;padding:5px;font-weight:400;font-size:8.5pt;width:18mm'>明細金額</th>" +
     "</tr></thead>";
 }
 
