@@ -378,34 +378,109 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
 }
 
 // ── History View ─────────────────────────────────────────────
-function HistoryView({ history, setHistory, co, products, setProducts }) {
+function HistoryView({ history, setHistory, co, products, setProducts, user }) {
   const [sel, setSel] = useState(null);
   const [q, setQ] = useState("");
   const [editTarget, setEditTarget] = useState(null);
   const [typeFilter, setTypeFilter] = useState("全て");
+  const [checked, setChecked] = useState({});   // 複数選択
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchModal, setBatchModal] = useState(false);
+  const [batchDueDate, setBatchDueDate] = useState("");
+  const [batchBank, setBatchBank] = useState(co.bankA||"");
+
   const filt = (history||[]).filter(h=>
     (typeFilter==="全て"||h.docType===typeFilter)&&
     (!q||h.customer?.includes(q)||h.docNo?.includes(q)||h.subject?.includes(q))
   );
   const tc = (t) => t==="請求書"?"#1d4ed8":t==="領収書"?"#7c3aed":t==="見積書"?"#d97706":"#047857";
   const totalToday = (history||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
+
+  const checkedList = filt.filter(h=>checked[h.id]);
+  const checkedCustomers = [...new Set(checkedList.map(h=>h.customer))];
+
+  const toggleCheck = (id, e) => {
+    e.stopPropagation();
+    setChecked(c=>({...c,[id]:!c[id]}));
+  };
+  const clearCheck = () => setChecked({});
+
+  // 複数納品書→1枚の請求書に変換
+  const batchToInvoice = async () => {
+    if (checkedList.length===0) return;
+    if (checkedCustomers.length>1) { alert("同じ取引先の納品書のみ選択してください"); return; }
+    const customer = checkedCustomers[0];
+    // 全品目を日付順にまとめる
+    const allItems = checkedList
+      .sort((a,b)=>a.date>b.date?1:-1)
+      .flatMap(dn=>(dn.items||[]).map(it=>({...it, date:it.date||dn.date})));
+    const inv = {
+      docType:"請求書", docNo:newDocNo("請求書"), date:tod(),
+      customer, subject:checkedList.map(d=>d.subject).filter(Boolean).join("・")||"",
+      dueDate:batchDueDate, bank:batchBank, items:allItems,
+    };
+    try {
+      const saved = await db.saveDocument(inv, user||{id:"batch",email:"batch"});
+      setHistory(h=>[saved,...h]);
+      clearCheck(); setBatchMode(false); setBatchModal(false);
+      alert("請求書を発行しました: "+saved.docNo+"
+取引先: "+customer+"
+品目数: "+allItems.length);
+      generateAndDownloadPDF(saved, co);
+    } catch(e) { alert("エラー: "+e.message); }
+  };
+
+  // 単一書類→変換
+  const convertDoc = async (fromDoc, toType) => {
+    const items = fromDoc.items||[];
+    const doc = {
+      ...fromDoc, docType:toType, docNo:newDocNo(toType), id:undefined,
+      items: toType==="請求書" ? items.map(it=>({...it,date:it.date||fromDoc.date})) : items,
+    };
+    const saved = await db.saveDocument(doc, user||{id:"convert",email:"system"});
+    setHistory(h=>[saved,...h]);
+    setSel(null);
+    alert(toType+"に変換しました: "+saved.docNo);
+  };
+
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
-    <div style={{ padding:"12px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-      <input style={{ ...INP, flex:1, minWidth:150 }} placeholder="取引先・書類番号・件名で検索..." value={q} onChange={(e)=>setQ(e.target.value)}/>
-      <select style={{ ...SEL, width:100 }} value={typeFilter} onChange={(e)=>setTypeFilter(e.target.value)}>
-        <option>全て</option><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option><option>見積書</option>
+    <div style={{ padding:"10px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+      <input style={{ ...INP, flex:1, minWidth:120 }} placeholder="取引先・書類番号で検索..." value={q} onChange={(e)=>setQ(e.target.value)}/>
+      <select style={{ ...SEL, width:90 }} value={typeFilter} onChange={(e)=>setTypeFilter(e.target.value)}>
+        <option>全て</option><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option>
       </select>
-      <span style={{ fontSize:12, color:"#9ca3af", whiteSpace:"nowrap" }}>{filt.length}件 / 本日{totalToday}件</span>
+      <Btn small variant={batchMode?"primary":"ghost"} onClick={()=>{ setBatchMode(b=>!b); clearCheck(); }}>
+        {batchMode?"✅ 選択中":"☑ 複数選択"}
+      </Btn>
+      {batchMode&&checkedList.length>0&&<Btn small variant="blue" onClick={()=>setBatchModal(true)}>
+        📄 請求書まとめ発行（{checkedList.length}件）
+      </Btn>}
+      {batchMode&&checkedList.length>0&&<Btn small variant="red" onClick={clearCheck}>クリア</Btn>}
+      <span style={{ fontSize:11, color:"#9ca3af", whiteSpace:"nowrap" }}>{filt.length}件 / 本日{totalToday}件</span>
     </div>
+
+    {batchMode&&checkedList.length>0&&<div style={{ padding:"8px 18px", background:"#eff6ff", borderBottom:"1px solid #bfdbfe", fontSize:12 }}>
+      {checkedCustomers.length===1
+        ? <span style={{ color:"#1d4ed8" }}>✅ {checkedCustomers[0]} の納品書 {checkedList.length}件を選択中</span>
+        : <span style={{ color:"#dc2626" }}>⚠️ 複数の取引先が混在しています（{checkedCustomers.join("・")}）— 同一取引先のみ選択してください</span>
+      }
+    </div>}
+
     <div style={{ flex:1, overflowY:"auto" }}>
       {filt.length===0&&<div style={{ textAlign:"center", padding:48, color:"#9ca3af" }}>書類がありません</div>}
       {filt.map(h=>{
         const tx = calcTax(h.items||[]);
-        return <div key={h.id} onClick={()=>setSel(h)} style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 18px", borderBottom:"1px solid #f9f9f9", cursor:"pointer", background:sel?.id===h.id?"#f9fafb":"transparent" }}>
+        const isChecked = !!checked[h.id];
+        return <div key={h.id}
+          onClick={()=>batchMode ? null : setSel(h)}
+          style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 18px", borderBottom:"1px solid #f9f9f9", cursor:batchMode?"default":"pointer",
+            background:isChecked?"#eff6ff":sel?.id===h.id?"#f9fafb":"transparent" }}>
+          {batchMode&&<input type="checkbox" checked={isChecked} onChange={(e)=>toggleCheck(h.id,e)}
+            style={{ width:16, height:16, cursor:"pointer", flexShrink:0 }}/>}
           <span style={{ background:tc(h.docType), color:"#fff", fontSize:11, padding:"2px 6px", borderRadius:3, whiteSpace:"nowrap" }}>{h.docType}</span>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontWeight:500, fontSize:13 }}>{h.customer}</div>
-            <div style={{ fontSize:11, color:"#9ca3af" }}>{h.docNo} • {h.date} {h.subject&&"• "+h.subject}</div>
+            <div style={{ fontSize:11, color:"#9ca3af" }}>{h.docNo} • {h.date}{h.subject&&" • "+h.subject}</div>
           </div>
           <div style={{ textAlign:"right", flexShrink:0 }}>
             <div style={{ fontWeight:500, fontSize:13 }}>{fm(h.docType==="領収書"?h.amount:tx.total)}円</div>
@@ -414,27 +489,43 @@ function HistoryView({ history, setHistory, co, products, setProducts }) {
         </div>;
       })}
     </div>
+
+    {/* 一括請求書モーダル */}
+    {batchModal&&<Modal title={"📄 請求書まとめ発行 — "+checkedCustomers[0]} onClose={()=>setBatchModal(false)}>
+      <div style={{ fontSize:13, marginBottom:12, color:"#6b7280" }}>
+        選択した納品書 {checkedList.length}件の品目をまとめて1枚の請求書に変換します。
+      </div>
+      <div style={{ marginBottom:12 }}>
+        {checkedList.sort((a,b)=>a.date>b.date?1:-1).map(d=>{
+          const tx=calcTax(d.items||[]);
+          return <div key={d.id} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0", borderBottom:"1px solid #f3f4f6", fontSize:12 }}>
+            <span>{d.date} {d.docNo}</span>
+            <span style={{ fontWeight:500 }}>{fm(tx.total)}円</span>
+          </div>;
+        })}
+        <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", fontWeight:600, fontSize:14 }}>
+          <span>合計</span>
+          <span>{fm(checkedList.reduce((s,d)=>s+calcTax(d.items||[]).total,0))}円</span>
+        </div>
+      </div>
+      <Field label="支払期限"><input style={INP} type="date" value={batchDueDate} onChange={e=>setBatchDueDate(e.target.value)}/></Field>
+      <Field label="振込先"><input style={INP} value={batchBank} onChange={e=>setBatchBank(e.target.value)}/></Field>
+      <div style={{ display:"flex", gap:8, marginTop:14 }}>
+        <Btn onClick={()=>setBatchModal(false)} style={{ flex:1 }}>キャンセル</Btn>
+        <Btn variant="primary" onClick={batchToInvoice} style={{ flex:1 }}>📄 請求書発行＋PDF生成</Btn>
+      </div>
+    </Modal>}
+
+    {/* 単一書類詳細モーダル */}
     {sel&&<Modal title={sel.docType+" - "+sel.customer} onClose={()=>setSel(null)}>
       {[["書類番号",sel.docNo],["日付",sel.date],["入金期日",sel.dueDate],["件名",sel.subject],["作成者",sel.savedBy]].map(([l,v])=>v?<div key={l} style={{ display:"flex", gap:8, padding:"5px 0", borderBottom:"1px solid #f3f4f6", fontSize:13 }}><span style={{ color:"#6b7280", minWidth:80 }}>{l}</span><span>{v}</span></div>:null)}
       {(sel.items||[]).map((it,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0", borderBottom:"1px solid #f3f4f6" }}>
         <span>{it.origin&&it.origin+" "}{it.name} × {it.qty}{it.unit}</span><span style={{ fontWeight:500 }}>{fm(it.amount)}円</span>
       </div>)}
       {(sel.items||[]).length>0&&(()=>{ const tx=calcTax(sel.items); return <div style={{ textAlign:"right", marginTop:8, fontSize:13 }}><div style={{ color:"#6b7280" }}>消費税: {fm(tx.tax)}円</div><div style={{ fontWeight:600, fontSize:15 }}>合計: {fm(tx.total)}円</div></div>; })()}
-      <div style={{ display:"flex", gap:8, marginTop:14 }}>
-        {sel.docType==="見積書"&&<Btn variant="blue" onClick={async()=>{
-          const doc = {...sel, docType:"納品書", docNo:newDocNo("納品書"), id:undefined};
-          const saved = await db.saveDocument(doc, {id:"convert", email:"system"});
-          setHistory(h=>[saved,...h]);
-          setSel(null);
-          alert("納品書に変換しました: "+saved.docNo);
-        }}>📋 納品書に変換</Btn>}
-        {sel.docType==="見積書"&&<Btn variant="primary" style={{background:"#1d4ed8"}} onClick={async()=>{
-          const doc = {...sel, docType:"請求書", docNo:newDocNo("請求書"), id:undefined};
-          const saved = await db.saveDocument(doc, {id:"convert", email:"system"});
-          setHistory(h=>[saved,...h]);
-          setSel(null);
-          alert("請求書に変換しました: "+saved.docNo);
-        }}>📄 請求書に変換</Btn>}
+      <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
+        {(sel.docType==="見積書"||sel.docType==="納品書")&&<Btn variant="blue" onClick={()=>convertDoc(sel,"請求書")}>📄 請求書に変換</Btn>}
+        {sel.docType==="見積書"&&<Btn variant="ghost" onClick={()=>convertDoc(sel,"納品書")}>📋 納品書に変換</Btn>}
         <Btn variant="red" onClick={async()=>{ if(!confirm("削除しますか？\n※納品書・請求書の場合、在庫も自動で戻ります"))return;
           try {
             await db.deleteDocument(sel.id);
@@ -443,7 +534,7 @@ function HistoryView({ history, setHistory, co, products, setProducts }) {
             setSel(null);
           } catch(e) { alert("削除エラー: "+e.message); } }}>🗑 削除</Btn>
         <Btn onClick={()=>{ setEditTarget(sel); setSel(null); }}>✏️ 編集</Btn>
-        <Btn variant="primary" onClick={()=>generateAndDownloadPDF(sel,co)} style={{ flex:1 }}>📄 PDF再生成</Btn>
+        <Btn variant="primary" onClick={()=>generateAndDownloadPDF(sel,co)} style={{ flex:1 }}>📄 PDF</Btn>
       </div>
     </Modal>}
     {editTarget&&<DocEditModal doc={editTarget} co={co} products={products||[]} onClose={()=>setEditTarget(null)} onSave={async(nd)=>{
@@ -864,7 +955,7 @@ export default function App() {
       </div>
       <div style={{ flex:1, overflow:"hidden" }}>
         {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
-        {tab==="history"&&<HistoryView history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts}/>}
+        {tab==="history"&&<HistoryView history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} user={user}/>}
         {tab==="products"&&<ProductsView products={products} setProducts={setProducts} user={user}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}
