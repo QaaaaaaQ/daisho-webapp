@@ -367,7 +367,7 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
 }
 
 // ── History View ─────────────────────────────────────────────
-function HistoryView({ history, setHistory, co, products }) {
+function HistoryView({ history, setHistory, co, products, setProducts }) {
   const [sel, setSel] = useState(null);
   const [q, setQ] = useState("");
   const [editTarget, setEditTarget] = useState(null);
@@ -839,7 +839,7 @@ export default function App() {
       </div>
       <div style={{ flex:1, overflow:"hidden" }}>
         {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
-        {tab==="history"&&<HistoryView history={history} setHistory={setHistory} co={co} products={products}/>}
+        {tab==="history"&&<HistoryView history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts}/>}
         {tab==="products"&&<ProductsView products={products} setProducts={setProducts} user={user}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}
