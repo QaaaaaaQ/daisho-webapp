@@ -314,11 +314,14 @@ export async function generateAndDownloadPDF(doc, co) {
     // モバイル（iPhone/Android）は新しいタブで表示、PCはダウンロード
     var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     if (isMobile) {
-      // blob URLを新しいタブで開く（Safariの共有ボタンから共有可能）
-      var pdfBlob = pdf.output("blob");
-      var blobUrl = URL.createObjectURL(pdfBlob);
-      var newTab = window.open(blobUrl, "_blank");
-      // タブが開けない場合はダウンロードにフォールバック
+      // HTMLを新しいタブで開く。<title>にファイル名をセットすることで
+      // iOSのShareシート→「ファイルに保存」時に正しいファイル名になる
+      var titleFilename = filename.replace(".pdf", "");
+      var htmlWithTitle = fullHtml
+        .replace(/<title>[^<]*<\/title>/, "<title>" + titleFilename + "</title>");
+      var htmlBlob = new Blob([htmlWithTitle], { type: "text/html;charset=utf-8" });
+      var htmlUrl = URL.createObjectURL(htmlBlob);
+      var newTab = window.open(htmlUrl, "_blank");
       if (!newTab) { pdf.save(filename); }
     } else {
       pdf.save(filename);
