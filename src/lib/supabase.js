@@ -11,6 +11,7 @@ function normalizeDoc(row) {
     customer: row.customer, subject: row.subject, dueDate: row.due_date,
     bank: row.bank, note: row.note, amount: row.amount, description: row.description,
     toAddr: row.to_addr, toContact: row.to_contact, items: row.items || [],
+    expiryDate: row.expiry_date, conditions: row.conditions,
     savedAt: row.created_at, savedBy: row.created_by_name, savedByEmail: row.created_by_email,
   };
 }
@@ -29,6 +30,7 @@ export const db = {
       bank: doc.bank || null, note: doc.note || null, amount: doc.amount || null,
       description: doc.description || null, to_addr: doc.toAddr || null,
       to_contact: doc.toContact || null, items: doc.items || [],
+        expiry_date: doc.expiryDate || null, conditions: doc.conditions || null,
       created_by: user.id,
       created_by_name: user.user_metadata?.full_name || user.email,
       created_by_email: user.email,
@@ -42,6 +44,7 @@ export const db = {
       subject: doc.subject || null, due_date: doc.dueDate || null, bank: doc.bank || null,
       note: doc.note || null, amount: doc.amount || null, description: doc.description || null,
       to_addr: doc.toAddr || null, to_contact: doc.toContact || null, items: doc.items || [],
+        expiry_date: doc.expiryDate || null, conditions: doc.conditions || null,
     }).eq("id", id).select().single();
     if (error) throw error;
     return normalizeDoc(data);

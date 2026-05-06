@@ -6,8 +6,8 @@ const tod = () => new Date().toISOString().slice(0, 10);
 const fm = (n) => Number(n || 0).toLocaleString("ja-JP");
 const fd = (d) => { if (!d) return ""; try { const t = new Date(d); return isNaN(t) ? String(d) : t.getFullYear() + "-" + String(t.getMonth()+1).padStart(2,"0") + "-" + String(t.getDate()).padStart(2,"0"); } catch { return String(d); } };
 const tid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
-const newDocNo = (t) => (t==="請求書"?"INV":t==="領収書"?"REC":"DEL") + "-" + String(Date.now()).slice(-10);
-const DOC_KW = ["納品書","請求書","領収書"];
+const newDocNo = (t) => (t==="請求書"?"INV":t==="領収書"?"REC":t==="見積書"?"EST":"DEL") + "-" + String(Date.now()).slice(-10);
+const DOC_KW = ["納品書","請求書","領収書","見積書"];
 const isDocReq = (t) => DOC_KW.some((k) => t.includes(k)) && (t.match(/[×x＊×]/) || t.match(/\d+円/) || t.match(/\d+kg/i) || t.match(/[1-9]\d*\s*[枚本個パック袋箱ケース]/));
 const DEFAULT_CO = { name:"株式会社 神戸大商", manager:"経理担当　秦", addr:"〒532-0011 大阪市淀川区西中島４丁目７番１８号", tel:"TEL:06-6379-3451", fax:"FAX:06-6379-3461", regNo:"T4120001218286", bankA:"りそな銀行　新大阪駅前支店　普通0436583", bankB:"三井住友銀行　神戸営業部　普通預金1663502" };
 const N = "#1a2744";
@@ -104,7 +104,7 @@ function ItemsEditor({ items, products, onChange }) {
 // ── 書類直接作成フォーム ────────────────────────────────────
 function DirectDocForm({ co, products, customers, history, setHistory, setProducts, setCustomers, user, onClose }) {
   const emptyItem = { date:tod(), origin:"", name:"", qty:"", unit:"", price:"", amount:0, taxRate:8, taxIncluded:false, caseCount:"", qtyPerCase:"" };
-  const [f, setF] = useState({ docType:"納品書", date:tod(), customer:"", subject:"", dueDate:"", bank:co.bankA||"", note:"", items:[emptyItem] });
+  const [f, setF] = useState({ docType:"納品書", date:tod(), customer:"", subject:"", dueDate:"", expiryDate:"", conditions:"", bank:co.bankA||"", note:"", items:[emptyItem] });
   const [saving, setSaving] = useState(false);
   const upd = (k, v) => setF(x=>({...x,[k]:v}));
   const fillCustomer = (name) => {
@@ -144,7 +144,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
       <Field label="書類種別">
         <select style={SEL} value={f.docType} onChange={(e)=>upd("docType",e.target.value)}>
-          <option>納品書</option><option>請求書</option><option>領収書</option>
+          <option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option>
         </select>
       </Field>
       <Field label="日付"><input style={INP} type="date" value={f.date} onChange={(e)=>upd("date",e.target.value)}/></Field>
@@ -157,6 +157,8 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
       </Field>
       <Field label="件名"><input style={INP} value={f.subject} onChange={(e)=>upd("subject",e.target.value)} placeholder="例: さざえ"/></Field>
       {f.docType==="請求書"&&<Field label="振込先"><input style={INP} value={f.bank} onChange={(e)=>upd("bank",e.target.value)}/></Field>}
+      {f.docType==="見積書"&&<Field label="有効期限"><input style={INP} type="date" value={f.expiryDate||""} onChange={(e)=>upd("expiryDate",e.target.value)}/></Field>}
+      {f.docType==="見積書"&&<Field label="取引条件"><input style={INP} value={f.conditions||""} onChange={(e)=>upd("conditions",e.target.value)} placeholder="例: 現金払い"/></Field>}
     </div>
     <div style={{ fontWeight:500, fontSize:13, marginBottom:8, color:"#374151" }}>品目</div>
     <ItemsEditor items={f.items} products={products} onChange={(items)=>upd("items",items)}/>
@@ -176,12 +178,14 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
   const tx = calcTax(d.items||[]);
   return <Modal title={d.docType + " 編集"} onClose={onClose} maxW={900} tall>
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
-      <Field label="書類種別"><select style={SEL} value={d.docType} onChange={(e)=>upd("docType",e.target.value)}><option>納品書</option><option>請求書</option><option>領収書</option></select></Field>
+      <Field label="書類種別"><select style={SEL} value={d.docType} onChange={(e)=>upd("docType",e.target.value)}><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option></select></Field>
       <Field label="日付"><input style={INP} type="date" value={d.date||""} onChange={(e)=>upd("date",e.target.value)}/></Field>
       <Field label="入金期日"><input style={INP} type="date" value={d.dueDate||""} onChange={(e)=>upd("dueDate",e.target.value)}/></Field>
       <Field label="取引先"><input style={INP} value={d.customer||""} onChange={(e)=>upd("customer",e.target.value)}/></Field>
       <Field label="件名"><input style={INP} value={d.subject||""} onChange={(e)=>upd("subject",e.target.value)}/></Field>
       {d.docType==="請求書"&&<Field label="振込先"><input style={INP} value={d.bank||""} onChange={(e)=>upd("bank",e.target.value)}/></Field>}
+      {d.docType==="見積書"&&<Field label="有効期限"><input style={INP} type="date" value={d.expiryDate||""} onChange={(e)=>upd("expiryDate",e.target.value)}/></Field>}
+      {d.docType==="見積書"&&<Field label="取引条件"><input style={INP} value={d.conditions||""} onChange={(e)=>upd("conditions",e.target.value)} placeholder="例: 現金払い"/></Field>}
     </div>
     {d.docType!=="領収書"&&<>
       <div style={{ fontWeight:500, fontSize:13, marginBottom:8 }}>品目</div>
@@ -202,7 +206,7 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
 // ── DocCard ─────────────────────────────────────────────────
 function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
   const tx = calcTax(doc.items||[]);
-  const tc = doc.docType==="請求書"?"#1d4ed8":doc.docType==="領収書"?"#7c3aed":"#047857";
+  const tc = doc.docType==="請求書"?"#1d4ed8":doc.docType==="領収書"?"#7c3aed":doc.docType==="見積書"?"#d97706":"#047857";
   return <div style={{ background:"#fff", border:"1.5px solid #e5e7eb", borderRadius:10, overflow:"hidden", marginTop:8, maxWidth:420, boxShadow:"0 2px 8px rgba(0,0,0,0.07)" }}>
     <div style={{ background:N, padding:"9px 13px", display:"flex", alignItems:"center", gap:10 }}>
       <span style={{ background:tc, color:"#fff", fontSize:11, padding:"2px 7px", borderRadius:4, fontWeight:500 }}>{doc.docType}</span>
@@ -376,13 +380,13 @@ function HistoryView({ history, setHistory, co, products, setProducts }) {
     (typeFilter==="全て"||h.docType===typeFilter)&&
     (!q||h.customer?.includes(q)||h.docNo?.includes(q)||h.subject?.includes(q))
   );
-  const tc = (t) => t==="請求書"?"#1d4ed8":t==="領収書"?"#7c3aed":"#047857";
+  const tc = (t) => t==="請求書"?"#1d4ed8":t==="領収書"?"#7c3aed":t==="見積書"?"#d97706":"#047857";
   const totalToday = (history||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
     <div style={{ padding:"12px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
       <input style={{ ...INP, flex:1, minWidth:150 }} placeholder="取引先・書類番号・件名で検索..." value={q} onChange={(e)=>setQ(e.target.value)}/>
       <select style={{ ...SEL, width:100 }} value={typeFilter} onChange={(e)=>setTypeFilter(e.target.value)}>
-        <option>全て</option><option>納品書</option><option>請求書</option><option>領収書</option>
+        <option>全て</option><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option><option>見積書</option>
       </select>
       <span style={{ fontSize:12, color:"#9ca3af", whiteSpace:"nowrap" }}>{filt.length}件 / 本日{totalToday}件</span>
     </div>
@@ -410,6 +414,20 @@ function HistoryView({ history, setHistory, co, products, setProducts }) {
       </div>)}
       {(sel.items||[]).length>0&&(()=>{ const tx=calcTax(sel.items); return <div style={{ textAlign:"right", marginTop:8, fontSize:13 }}><div style={{ color:"#6b7280" }}>消費税: {fm(tx.tax)}円</div><div style={{ fontWeight:600, fontSize:15 }}>合計: {fm(tx.total)}円</div></div>; })()}
       <div style={{ display:"flex", gap:8, marginTop:14 }}>
+        {sel.docType==="見積書"&&<Btn variant="blue" onClick={async()=>{
+          const doc = {...sel, docType:"納品書", docNo:newDocNo("納品書"), id:undefined};
+          const saved = await db.saveDocument(doc, {id:"convert", email:"system"});
+          setHistory(h=>[saved,...h]);
+          setSel(null);
+          alert("納品書に変換しました: "+saved.docNo);
+        }}>📋 納品書に変換</Btn>}
+        {sel.docType==="見積書"&&<Btn variant="primary" style={{background:"#1d4ed8"}} onClick={async()=>{
+          const doc = {...sel, docType:"請求書", docNo:newDocNo("請求書"), id:undefined};
+          const saved = await db.saveDocument(doc, {id:"convert", email:"system"});
+          setHistory(h=>[saved,...h]);
+          setSel(null);
+          alert("請求書に変換しました: "+saved.docNo);
+        }}>📄 請求書に変換</Btn>}
         <Btn variant="red" onClick={async()=>{ if(!confirm("削除しますか？\n※納品書・請求書の場合、在庫も自動で戻ります"))return;
           try {
             await db.deleteDocument(sel.id);

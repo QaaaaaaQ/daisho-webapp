@@ -150,3 +150,7 @@ ALTER TABLE company_settings ADD COLUMN IF NOT EXISTS logo_img TEXT;
 
 -- 仕入単価カラム追加（SQL Editorで実行）
 ALTER TABLE products ADD COLUMN IF NOT EXISTS purchase_price NUMERIC;
+
+-- 見積書用カラム追加（SQL Editorで実行）
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS expiry_date DATE;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS conditions TEXT;

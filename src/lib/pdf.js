@@ -28,8 +28,8 @@ export function calcTax(items) {
 
 // ── 右上ブロック: メタ情報 + ロゴ(2倍) + 社名(角印背景) ──────
 function coBlock(co, date, no, typeLabel) {
-  const dateLabel = typeLabel === "納品書" ? "納品日" : "請求日";
-  const noLabel   = typeLabel === "納品書" ? "納品書番号" : "請求書番号";
+  const dateLabel = typeLabel === "納品書" ? "納品日" : typeLabel === "見積書" ? "見積日" : "請求日";
+  const noLabel   = typeLabel === "納品書" ? "納品書番号" : typeLabel === "見積書" ? "見積書番号" : "請求書番号";
 
   // ロゴ: 2倍サイズ
   const logoHtml = (co && co.logoImg)
@@ -224,6 +224,34 @@ export function buildInvoiceHTML(doc, co) {
     '</body></html>';
 }
 
+// ─── 見積書 ────────────────────────────────────────────────────
+export function buildEstimateHTML(doc, co) {
+  var tx   = calcTax(doc.items);
+  var no   = doc.docNo || "EST-" + Date.now();
+  var date = fd(doc.date) || new Date().toISOString().slice(0,10);
+  var expiryRow = doc.expiryDate
+    ? '<div style="font-size:8.5pt;color:#444;margin-top:2mm">有効期限：' + fd(doc.expiryDate) + '</div>' : '';
+  var condRow = doc.conditions
+    ? '<div style="font-size:8.5pt;color:#444;margin-top:1mm">取引条件：' + doc.conditions + '</div>' : '';
+  return "<!DOCTYPE html><html lang='ja'><head><meta charset='utf-8'><title>見積書 " + no + "</title>" + baseCSS() + "</head><body>" +
+    "<h1>見　積　書</h1>" +
+    "<div class='hd'>" +
+      "<div>" +
+        "<div class='to-name'>" + (doc.customer||"") + " 御中</div>" +
+        (doc.toAddr ? "<div class='to-sub'>" + doc.toAddr + "</div>" : "") +
+        expiryRow + condRow +
+      "</div>" +
+      coBlock(co, date, no, "見積書") +
+    "</div>" +
+    "<div class='sbj'><span class='sbj-l'>件名</span><span>" + (doc.subject||"") + "</span></div>" +
+    "<div class='amt-row'><span class='amt-lbl'>お見積金額</span><span class='amt-val'>" + fm(tx.total) + "円</span></div>" +
+    "<table class='main'>" + tableHead(false) + "<tbody>" + buildRows(doc.items, false) + "</tbody></table>" +
+    taxNote(doc.items) +
+    taxBlock(tx) +
+    "<div class='note-box'><div class='nlbl'>備考・取引条件</div>" + (doc.note||"") + "</div>" +
+    "</body></html>";
+}
+
 // ─── 領収書 ────────────────────────────────────────────────────
 export function buildReceiptHTML(doc, co) {
   const amt  = Number(doc.amount||0);
@@ -258,6 +286,7 @@ export async function generateAndDownloadPDF(doc, co) {
   var fullHtml =
     doc.docType === "請求書" ? buildInvoiceHTML(doc, co) :
     doc.docType === "領収書" ? buildReceiptHTML(doc, co) :
+    doc.docType === "見積書" ? buildEstimateHTML(doc, co) :
     buildDeliveryHTML(doc, co);
 
   // <style>タグと<body>の中身を抽出（body直接スタイル問題を回避）
@@ -336,6 +365,7 @@ export function openPDF(doc, co) {
   const html =
     doc.docType === "請求書" ? buildInvoiceHTML(doc, co) :
     doc.docType === "領収書" ? buildReceiptHTML(doc, co) :
+    doc.docType === "見積書" ? buildEstimateHTML(doc, co) :
     buildDeliveryHTML(doc, co);
   const b = new Blob([html], { type: "text/html;charset=utf-8" });
   window.open(URL.createObjectURL(b), "_blank");
