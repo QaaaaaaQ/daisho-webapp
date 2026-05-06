@@ -8,7 +8,14 @@ const fd = (d) => { if (!d) return ""; try { const t = new Date(d); return isNaN
 const tid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
 const newDocNo = (t) => (t==="請求書"?"INV":t==="領収書"?"REC":t==="見積書"?"EST":"DEL") + "-" + String(Date.now()).slice(-10);
 const DOC_KW = ["納品書","請求書","領収書","見積書"];
-const isDocReq = (t) => DOC_KW.some((k) => t.includes(k)) && (t.match(/[×x＊×]/) || t.match(/\d+円/) || t.match(/\d+kg/i) || t.match(/[1-9]\d*\s*[枚本個パック袋箱ケース]/));
+const isDocReq = (t) => {
+  if (!DOC_KW.some((k) => t.includes(k))) return false;
+  // 見積書は品目チェック不要
+  if (t.includes("見積書") || t.includes("見積り") || t.includes("見積もり")) return true;
+  // その他は品目・金額が含まれているか確認
+  return t.match(/[×x＊×]/) || t.match(/\d+円/) || t.match(/\d+kg/i) ||
+    t.match(/[1-9]\d*\s*[枚本個パック袋箱ケース]/) || t.match(/\d+,\d+/) || t.length > 80;
+};
 const DEFAULT_CO = { name:"株式会社 神戸大商", manager:"経理担当　秦", addr:"〒532-0011 大阪市淀川区西中島４丁目７番１８号", tel:"TEL:06-6379-3451", fax:"FAX:06-6379-3461", regNo:"T4120001218286", bankA:"りそな銀行　新大阪駅前支店　普通0436583", bankB:"三井住友銀行　神戸営業部　普通預金1663502" };
 const N = "#1a2744";
 const INP = { width:"100%", padding:"7px 9px", border:"1px solid #d1d5db", borderRadius:6, fontSize:13, fontFamily:"inherit", background:"#fff", color:"#111", outline:"none" };
