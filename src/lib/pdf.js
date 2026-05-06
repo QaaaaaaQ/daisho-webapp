@@ -310,7 +310,19 @@ export async function generateAndDownloadPDF(doc, co) {
     }
 
     var filename = (doc.customer || "書類") + "_" + doc.docNo + ".pdf";
-    pdf.save(filename);
+
+    // モバイル（iPhone/Android）は新しいタブで表示、PCはダウンロード
+    var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+      // blob URLを新しいタブで開く（Safariの共有ボタンから共有可能）
+      var pdfBlob = pdf.output("blob");
+      var blobUrl = URL.createObjectURL(pdfBlob);
+      var newTab = window.open(blobUrl, "_blank");
+      // タブが開けない場合はダウンロードにフォールバック
+      if (!newTab) { pdf.save(filename); }
+    } else {
+      pdf.save(filename);
+    }
   } finally {
     document.body.removeChild(wrap);
   }
