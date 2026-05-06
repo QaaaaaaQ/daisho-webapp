@@ -85,9 +85,14 @@ function taxBlock(tx) {
 function buildRows(items, hasDate) {
   items = items || [];
   const ROW_H = "height:16px";
-  const TD = 'style="border:0.5px solid #ccc;padding:3px 5px;' + ROW_H + ';font-size:8.5pt;overflow:hidden"';
-  const TDR = 'style="border:0.5px solid #ccc;padding:3px 6px;' + ROW_H + ';font-size:8.5pt;text-align:right"';
-  const TDC = 'style="border:0.5px solid #ccc;padding:3px 5px;' + ROW_H + ';font-size:8.5pt;text-align:center"';
+  var B2 = "border:0.5px solid #ccc;" + ROW_H + ";font-size:8.5pt;overflow:hidden;padding:3px 4px";
+  var TD  = "style=\"" + B2 + "\"";
+  var TDR = "style=\"" + B2 + ";text-align:right\"";
+  var TDC = "style=\"" + B2 + ";text-align:center\"";
+  var TDorg  = "style=\"" + B2 + ";text-align:center;width:60px;min-width:60px;max-width:60px;font-size:7.5pt;color:#555\"";
+  var TDsm   = "style=\"" + B2 + ";text-align:center;width:50px;min-width:50px;max-width:50px\"";
+  var TDprice= "style=\"" + B2 + ";text-align:right;width:60px;min-width:60px;max-width:60px\"";
+  var TDamt  = "style=\"" + B2 + ";text-align:right;width:64px;min-width:64px;max-width:64px\"";
   const MIN = Math.max(items.length, 14);
   let h = "";
   for (let i = 0; i < MIN; i++) {
@@ -108,57 +113,42 @@ function buildRows(items, hasDate) {
       const dc = hasDate ? "<td " + TD + "></td>" : "";
       h += "<tr>" + dc +
         "<td " + TD + "></td>" +
-        "<td style='border:0.5px solid #ccc;height:16px'></td>" +
-        "<td " + TDC + "></td><td " + TDC + "></td>" +
-        "<td " + TDC + "></td><td " + TDC + "></td>" +
-        "<td " + TDR + "></td><td " + TDR + "></td></tr>";
+        "<td " + TDorg + "></td>" +
+        "<td " + TDsm + "></td><td " + TDsm + "></td>" +
+        "<td " + TDsm + "></td><td " + TDsm + "></td>" +
+        "<td " + TDprice + "></td><td " + TDamt + "></td></tr>";
     }
   }
   return h;
 }
 
 function tableHead(hasDate) {
-  const S  = "background:#1a2744;color:#fff;padding:4px 5px;font-weight:400;font-size:8.5pt;overflow:hidden";
-  const SC = S + ";text-align:center";
-  const SR = S + ";text-align:right";
-
-  // <colgroup> で幅を確実に固定（table-layout:fixed と組み合わせる）
-  // 取引日72px, 品名:auto, 産地50px, CS26px, 入数26px, 数量26px, 単位26px, 単価56px, 金額60px
-  var cols, dateTh = "";
-  if (hasDate) {
-    cols = "<colgroup>" +
-      "<col style='width:72px'/>" +   // 取引日
-      "<col/>" +                       // 品名 auto
-      "<col style='width:60px'/>" +   // 産地
-      "<col style='width:50px'/>" +   // CS
-      "<col style='width:50px'/>" +   // 入数
-      "<col style='width:50px'/>" +   // 数量
-      "<col style='width:50px'/>" +   // 単位
-      "<col style='width:56px'/>" +   // 単価
-      "<col style='width:60px'/>" +   // 金額
-      "</colgroup>";
-    dateTh = "<th style='" + S + "'>取引日</th>";
-  } else {
-    cols = "<colgroup>" +
-      "<col/>" +                       // 品名 auto
-      "<col style='width:60px'/>" +   // 産地
-      "<col style='width:50px'/>" +   // CS
-      "<col style='width:50px'/>" +   // 入数
-      "<col style='width:50px'/>" +   // 数量
-      "<col style='width:50px'/>" +   // 単位
-      "<col style='width:56px'/>" +   // 単価
-      "<col style='width:60px'/>" +   // 金額
-      "</colgroup>";
+  // 各列の幅をth・tdの両方に直接指定（html2canvas/colgroup非対応対策）
+  var W = {
+    date:  "width:72px;min-width:72px;max-width:72px",
+    name:  "min-width:60px",           // 品名: 残り全部
+    org:   "width:60px;min-width:60px;max-width:60px",
+    cs:    "width:50px;min-width:50px;max-width:50px",
+    qty:   "width:50px;min-width:50px;max-width:50px",
+    unit:  "width:50px;min-width:50px;max-width:50px",
+    price: "width:60px;min-width:60px;max-width:60px",
+    amt:   "width:64px;min-width:64px;max-width:64px"
+  };
+  var B = "background:#1a2744;color:#fff;padding:4px 3px;font-weight:400;overflow:hidden;";
+  function th(w, label, align) {
+    align = align || "left";
+    return "<th style='" + B + W[w] + ";font-size:8.5pt;text-align:" + align + "'>" + label + "</th>";
   }
-  return cols + "<thead><tr>" + dateTh +
-    "<th style='" + S  + "'>品名</th>" +
-    "<th style='" + SC + "'>産地</th>" +
-    "<th style='" + SC + "'>CS</th>" +
-    "<th style='" + SC + "'>入数</th>" +
-    "<th style='" + SC + "'>数量</th>" +
-    "<th style='" + SC + "'>単位</th>" +
-    "<th style='" + SR + "'>単価</th>" +
-    "<th style='" + SR + "'>明細金額</th>" +
+  var dateTh = hasDate ? th("date","取引日") : "";
+  return "<thead><tr>" + dateTh +
+    th("name","品名") +
+    th("org","産地","center") +
+    th("cs","CS","center") +
+    th("cs","入数","center") +
+    th("qty","数量","center") +
+    th("unit","単位","center") +
+    th("price","単価","right") +
+    th("amt","明細金額","right") +
     "</tr></thead>";
 }
 
