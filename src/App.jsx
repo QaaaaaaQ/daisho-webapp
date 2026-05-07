@@ -423,10 +423,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
       const saved = await db.saveDocument(inv, user||{id:"batch",email:"batch"});
       setHistory(h=>[saved,...h]);
       clearCheck(); setBatchMode(false); setBatchModal(false);
-      alert("請求書を発行しました: "+saved.docNo+"
-取引先: "+customer+"
-品目数: "+allItems.length);
-      generateAndDownloadPDF(saved, co);
+      alert("請求書を発行しました: "+saved.docNo+"\n取引先: "+customer+"\n品目数: "+allItems.length);\ngenerateAndDownloadPDF(saved, co);
     } catch(e) { alert("エラー: "+e.message); }
   };
 
