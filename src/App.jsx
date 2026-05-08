@@ -289,12 +289,23 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
             const updatedItems = (targetDoc.items||[]).map(it=>itemNames.includes(it.name)?{...it,origin}:it);
             const updated = await db.updateDocument(docId, {...targetDoc, items:updatedItems});
             setHistory(h=>h.map(x=>x.id===docId?updated:x));
+            // チャット上のDocCardも更新
+            setDocStates(s=>{
+              const newS = {...s};
+              Object.keys(newS).forEach(msgId=>{
+                if (newS[msgId]?.doc?.id===docId) {
+                  newS[msgId] = {...newS[msgId], doc:updated};
+                }
+              });
+              return newS;
+            });
+            setMsgs(m=>m.map(msg=>msg.doc?.id===docId ? {...msg, doc:updated} : msg));
             for (const name of itemNames) {
               const { data:prod } = await supabase.from("products").select("id").eq("name",name).maybeSingle();
               if (prod) await supabase.from("products").update({origin}).eq("id",prod.id);
             }
             setProducts(await db.getProducts());
-            setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:`✅ 「${itemNames.join("・")}」の産地を「${origin}」に設定しました。` }]);
+            setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:`✅ 「${itemNames.join("・")}」の産地を「${origin}」に設定しました。納品書のPDFを再生成してください。` }]);
           }
         } else {
           const apiMsgs = msgs.slice(-8).map(m=>({ role:m.role, content:m.text }));
