@@ -267,7 +267,7 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
         const msgId = tid();
         // 自動保存開始
         setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:true }}));
-        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:`${parsed.docType||"納品書"}を作成しました。自動保存中...`書")}を作成しました。自動保存中...", doc:parsed }]);
+        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:`${parsed.docType||"納品書"}を作成しました。自動保存中...`, doc:parsed }]);
         try {
           const saved = await db.saveDocument(parsed, user);
           const result = await autoRegisterAndStock({...parsed, id:saved.id}, user);
