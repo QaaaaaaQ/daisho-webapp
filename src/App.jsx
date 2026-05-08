@@ -144,10 +144,10 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
       if (result.stockLogs.length > 0) msgs.push("出庫記録: "+result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
       if (msgs.length > 0) alert(msgs.join("\n"));
       onClose();
-    } catch(e) { alert(`エラー: ${e.message); }
-    setSaving(false`);
+    } catch(e) { alert("エラー: "+e.message); }
+    setSaving(false);
   };
-  return <Modal title={"📝 ${f.docType}を直接作成"} onClose={onClose} maxW={900} tall>
+  return <Modal title={`📝 ${f.docType}を直接作成`} onClose={onClose} maxW={900} tall>
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
       <Field label="書類種別">
         <select style={SEL} value={f.docType} onChange={(e)=>upd("docType",e.target.value)}>
