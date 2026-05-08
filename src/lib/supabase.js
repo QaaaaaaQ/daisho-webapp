@@ -240,6 +240,11 @@ export async function autoRegisterAndStock(doc, user) {
 
       let productId = existingProd?.id;
 
+      // 既存商品でoriginが未設定なら更新
+      if (existingProd && !existingProd.origin && item.origin) {
+        await supabase.from("products").update({ origin: item.origin }).eq("id", existingProd.id);
+      }
+
       // 未登録なら追加
       if (!existingProd) {
         const { data: newProd } = await supabase.from("products").insert([{
@@ -247,7 +252,9 @@ export async function autoRegisterAndStock(doc, user) {
           origin: item.origin || null,
           unit: item.unit || "個",
           price: item.price || 0,
+          purchase_price: null,
           tax_rate: item.taxRate || 8,
+          qty_per_case: item.qtyPerCase || null,
           stock: 0,
         }]).select().single();
         if (newProd) {

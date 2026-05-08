@@ -24,7 +24,7 @@ INSERT INTO company_settings (id) VALUES (gen_random_uuid())
 -- ② 書類テーブル（納品書・請求書・領収書）
 CREATE TABLE IF NOT EXISTS documents (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  doc_type         TEXT NOT NULL CHECK (doc_type IN ('納品書','請求書','領収書')),
+  doc_type         TEXT NOT NULL CHECK (doc_type IN ('納品書','請求書','領収書','見積書')),
   doc_no           TEXT UNIQUE,
   date             DATE,
   customer         TEXT,

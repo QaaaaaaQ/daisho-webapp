@@ -139,15 +139,15 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
       if (print) await generateAndDownloadPDF(saved, co);
       // 結果メッセージ
       const msgs = [];
-      if (result.newCustomer) msgs.push("顧客「" + result.newCustomer + "」を自動登録しました");
-      if (result.newProducts.length > 0) msgs.push("商品「" + result.newProducts.join("・") + "」を自動登録しました");
-      if (result.stockLogs.length > 0) msgs.push("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
+      if (result.newCustomer) msgs.push(`顧客「${result.newCustomer}」を自動登録しました`);
+      if (result.newProducts.length > 0) msgs.push("商品「${result.newProducts.join("・")}」を自動登録しました");
+      if (result.stockLogs.length > 0) msgs.push(`出庫記録: ${result.stockLogs.map(l=>l.name}×${l.qty`).join("、"));
       if (msgs.length > 0) alert(msgs.join("\n"));
       onClose();
-    } catch(e) { alert("エラー: "+e.message); }
-    setSaving(false);
+    } catch(e) { alert(`エラー: ${e.message); }
+    setSaving(false`);
   };
-  return <Modal title={"📝 " + f.docType + "を直接作成"} onClose={onClose} maxW={900} tall>
+  return <Modal title={"📝 ${f.docType}を直接作成"} onClose={onClose} maxW={900} tall>
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
       <Field label="書類種別">
         <select style={SEL} value={f.docType} onChange={(e)=>upd("docType",e.target.value)}>
@@ -183,7 +183,7 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
   const [d, setD] = useState({ ...doc });
   const upd = (k,v) => setD(x=>({...x,[k]:v}));
   const tx = calcTax(d.items||[]);
-  return <Modal title={d.docType + " 編集"} onClose={onClose} maxW={900} tall>
+  return <Modal title={d.docType+" 編集"} onClose={onClose} maxW={900} tall>
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
       <Field label="書類種別"><select style={SEL} value={d.docType} onChange={(e)=>upd("docType",e.target.value)}><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option></select></Field>
       <Field label="日付"><input style={INP} type="date" value={d.date||""} onChange={(e)=>upd("date",e.target.value)}/></Field>
@@ -267,7 +267,7 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
         const msgId = tid();
         // 自動保存開始
         setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:true }}));
-        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:(parsed.docType||"納品書")+"を作成しました。自動保存中...", doc:parsed }]);
+        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:`${parsed.docType||"納品書"}を作成しました。自動保存中...`書")}を作成しました。自動保存中...", doc:parsed }]);
         try {
           const saved = await db.saveDocument(parsed, user);
           const result = await autoRegisterAndStock({...parsed, id:saved.id}, user);
@@ -279,24 +279,55 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
           }
           setHistory(h=>[saved,...h]);
           setDocStates(s=>({...s,[msgId]:{ doc:saved, saved:true, saving:false }}));
-          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(saved.docType||"納品書")+"を自動保存しました ✓", doc:saved} : msg));
+          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:`${saved.docType||"納品書"}を自動保存しました ✓`, doc:saved} : msg));
           // 自動登録メッセージ
           const autoMsgs = [];
-          if (result.newCustomer) autoMsgs.push("顧客「"+result.newCustomer+"」を登録");
-          if (result.newProducts.length>0) autoMsgs.push("商品「"+result.newProducts.join("・")+"」を登録");
-          if (result.stockLogs.length>0) autoMsgs.push("出庫: "+result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
+          if (result.newCustomer) autoMsgs.push(`顧客「${result.newCustomer}」を登録`);
+          if (result.newProducts.length>0) autoMsgs.push(`商品「${result.newProducts.join("・")}」を登録`);
+          if (result.stockLogs.length>0) autoMsgs.push(`出庫: ${result.stockLogs.map(l=>l.name+"×"+l.qty).join("、")}`);
           if (autoMsgs.length>0) setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:"📋 "+autoMsgs.join("\n📋 ") }]);
+          // 産地未設定の品目があれば確認
+          const noOriginItems = (saved.items||[]).filter(it=>it.name&&!it.origin);
+          if (noOriginItems.length>0) {
+            const noOriginNames = noOriginItems.map(it=>it.name).join("・");
+            setMsgs(m=>[...m,{ id:tid(), role:"assistant",
+              text:`📍 「${noOriginNames}」の産地が未設定です。国産ですか？\n（「国産」「韓国産」「中国産」など返信してください）`,
+              pendingOrigin:{ docId:saved.id, items:noOriginItems.map(it=>it.name) } }]);
+          }
         } catch(saveErr) {
           setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:false }}));
-          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(parsed.docType||"納品書")+"を作成しました（保存エラー: "+saveErr.message+"）"} : msg));
+          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:`${parsed.docType||"納品書"}を作成しました（保存エラー: ${saveErr.message}）`} : msg));
         }
       } else {
-        const apiMsgs = msgs.slice(-8).map(m=>({ role:m.role, content:m.text }));
-        apiMsgs.push({ role:"user", content:text });
-        const reply = await aiChat(apiMsgs, co);
-        setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:reply }]);
+        // 産地確認への返答チェック
+        const lastPending = [...msgs].reverse().find(m=>m.pendingOrigin);
+        if (lastPending && (text.includes("産") || text.includes("国") || /^[ぁ-ん一-龯a-zA-Z]{1,10}$/.test(text.trim()))) {
+          const origin = text.trim();
+          const { docId, items: itemNames } = lastPending.pendingOrigin;
+          // ドキュメントの品目に産地をセット
+          const targetDoc = history.find(h=>h.id===docId);
+          if (targetDoc) {
+            const updatedItems = (targetDoc.items||[]).map(it=>
+              itemNames.includes(it.name) ? {...it, origin} : it
+            );
+            const updated = await db.updateDocument(docId, {...targetDoc, items:updatedItems});
+            setHistory(h=>h.map(x=>x.id===docId?updated:x));
+            // 商品マスターの産地も更新
+            for (const name of itemNames) {
+              const { data:prod } = await supabase.from("products").select("id").eq("name",name).maybeSingle();
+              if (prod) await supabase.from("products").update({origin}).eq("id",prod.id);
+            }
+            const prods = await db.getProducts(); setProducts(prods);
+            setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:`✅ 「${itemNames.join("・")}」の産地を「${origin}」に設定しました。商品マスターも更新しました。` }]);
+          }
+        } else {
+          const apiMsgs = msgs.slice(-8).map(m=>({ role:m.role, content:m.text }));
+          apiMsgs.push({ role:"user", content:text });
+          const reply = await aiChat(apiMsgs, co);
+          setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:reply }]);
+        }
       }
-    } catch(e) { setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:"エラー: "+e.message }]); }
+    } catch(e) { setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:"エラー: "+e.messageessage }]); }
     setLoading(false);
   };
 
@@ -312,14 +343,14 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
         const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
         setProducts(prods); setCustomers(custs);
         const msgs = [];
-        if (result.newCustomer) msgs.push("顧客「" + result.newCustomer + "」を登録しました");
-        if (result.newProducts.length > 0) msgs.push("商品「" + result.newProducts.join("・") + "」を登録しました");
-        if (result.stockLogs.length > 0) msgs.push("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
+        if (result.newCustomer) msgs.push(`顧客「${result.newCustomer}」を登録しました`);
+        if (result.newProducts.length > 0) msgs.push("商品「${result.newProducts.join("・")}」を登録しました");
+        if (result.stockLogs.length > 0) msgs.push(`出庫記録: ${result.stockLogs.map(l=>l.name}×${l.qty`).join("、"));
         setAutoMsg(msgs.join("\n"));
       } else if (result.stockLogs.length > 0) {
         const [prods] = await Promise.all([db.getProducts()]);
         setProducts(prods);
-        setAutoMsg("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
+        setAutoMsg("出庫記録: ${result.stockLogs.map(l=>l.name}×${l.qty).join("、));
       }
     } catch(e) { alert("保存エラー: "+e.message); }
   };
@@ -423,22 +454,22 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
       const saved = await db.saveDocument(inv, user||{id:"batch",email:"batch"});
       setHistory(h=>[saved,...h]);
       clearCheck(); setBatchMode(false); setBatchModal(false);
-      alert("請求書を発行しました: "+saved.docNo+" 取引先: "+customer+" 品目数: "+String(allItems.length));
+      alert(`請求書を発行しました: ${saved.docNo} 取引先: ${customer} 品目数: ${String(allItems.length));
         generateAndDownloadPDF(saved, co);
-    } catch(e) { alert("エラー: "+e.message); }
+    } catch(e`) { alert(`エラー: ${e.message); }
   };
 
   // 単一書類→変換
   const convertDoc = async (fromDoc, toType) => {
     const items = fromDoc.items||[];
     const doc = {
-      ...fromDoc, docType:toType, docNo:newDocNo(toType), id:undefined,
+      ...fromDoc, docType:toType, docNo:newDocNo(toType`), id:undefined,
       items: toType==="請求書" ? items.map(it=>({...it,date:it.date||fromDoc.date})) : items,
     };
     const saved = await db.saveDocument(doc, user||{id:"convert",email:"system"});
     setHistory(h=>[saved,...h]);
     setSel(null);
-    alert(toType+"に変換しました: "+saved.docNo);
+    alert(toType}に変換しました: ${saved.docNo);
   };
 
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
@@ -478,7 +509,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
           <span style={{ background:tc(h.docType), color:"#fff", fontSize:11, padding:"2px 6px", borderRadius:3, whiteSpace:"nowrap" }}>{h.docType}</span>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontWeight:500, fontSize:13 }}>{h.customer}</div>
-            <div style={{ fontSize:11, color:"#9ca3af" }}>{h.docNo} • {h.date}{h.subject&&" • "+h.subject}</div>
+            <div style={{ fontSize:11, color:"#9ca3af" }}>{h.docNo+" • "+h.date+(h.subject?" • "+h.subject:"")}</div>
           </div>
           <div style={{ textAlign:"right", flexShrink:0 }}>
             <div style={{ fontWeight:500, fontSize:13 }}>{fm(h.docType==="領収書"?h.amount:tx.total)}円</div>
@@ -489,7 +520,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
     </div>
 
     {/* 一括請求書モーダル */}
-    {batchModal&&<Modal title={"📄 請求書まとめ発行 — "+checkedCustomers[0]} onClose={()=>setBatchModal(false)}>
+    {batchModal&&<Modal title={`📄 請求書まとめ発行 — ${checkedCustomers[0]}`} onClose={()=>setBatchModal(false)}>
       <div style={{ fontSize:13, marginBottom:12, color:"#6b7280" }}>
         選択した納品書 {checkedList.length}件の品目をまとめて1枚の請求書に変換します。
       </div>
@@ -515,7 +546,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
     </Modal>}
 
     {/* 単一書類詳細モーダル */}
-    {sel&&<Modal title={sel.docType+" - "+sel.customer} onClose={()=>setSel(null)}>
+    {sel&&<Modal title={sel.docType} - ${sel.customer} onClose={()=>setSel(null)}>
       {[["書類番号",sel.docNo],["日付",sel.date],["入金期日",sel.dueDate],["件名",sel.subject],["作成者",sel.savedBy]].map(([l,v])=>v?<div key={l} style={{ display:"flex", gap:8, padding:"5px 0", borderBottom:"1px solid #f3f4f6", fontSize:13 }}><span style={{ color:"#6b7280", minWidth:80 }}>{l}</span><span>{v}</span></div>:null)}
       {(sel.items||[]).map((it,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0", borderBottom:"1px solid #f3f4f6" }}>
         <span>{it.origin&&it.origin+" "}{it.name} × {it.qty}{it.unit}</span><span style={{ fontWeight:500 }}>{fm(it.amount)}円</span>
@@ -530,8 +561,8 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
             setHistory(h=>h.filter(x=>x.id!==sel.id));
             const prods = await db.getProducts(); setProducts(prods);
             setSel(null);
-          } catch(e) { alert("削除エラー: "+e.message); } }}>🗑 削除</Btn>
-        <Btn onClick={()=>{ setEditTarget(sel); setSel(null); }}>✏️ 編集</Btn>
+          } catch(e) { alert(`削除エラー: ${e.message); } }}>🗑 削除</Btn>
+        <Btn onClick={()=>{ setEditTarget(sel); setSel(null`); }}>✏️ 編集</Btn>
         <Btn variant="primary" onClick={()=>generateAndDownloadPDF(sel,co)} style={{ flex:1 }}>📄 PDF</Btn>
       </div>
     </Modal>}
@@ -569,19 +600,19 @@ function ProductsView({ products, setProducts, user }) {
   const save = async () => {
     if (!f.name) { alert("商品名は必須です"); return; }
     try { await db.saveProduct(f); const next=await db.getProducts(); setProducts(next); setM(null); }
-    catch(e) { alert("保存エラー: "+e.message); }
+    catch(e) { alert(`保存エラー: ${e.message); }
   };
 
-  const del = async (id) => {
+  const del = async (id`) => {
     if (!confirm("削除しますか？")) return;
     try { await db.deleteProduct(id); setProducts(products.filter(p=>p.id!==id)); }
-    catch(e) { alert("削除エラー: "+e.message); }
+    catch(e) { alert(`削除エラー: ${e.message); }
   };
 
   const doMerge = async () => {
     const count = await mergeDuplicateProducts();
     const next = await db.getProducts();
-    setProducts(next);
+    setProducts(next`);
     alert(count > 0 ? count+"件の重複商品をマージしました" : "重複はありませんでした");
   };
 
@@ -596,11 +627,11 @@ function ProductsView({ products, setProducts, user }) {
       const newLogs = await getStockLogs(logProduct.id);
       setLogs(newLogs);
       setReceiving({ qty:"", supplier:"", note:"" });
-      alert("入庫完了。現在庫: "+newStock+" "+logProduct.unit);
-    } catch(e) { alert("入庫エラー: "+e.message); }
+      alert(`入庫完了。現在庫: ${newStock} ${logProduct.unit);
+    } catch(e`) { alert(`入庫エラー: ${e.message); }
   };
 
-  const SortTh = ({k, label}) => <th onClick={()=>sort(k)} style={{ padding:"7px 10px", fontWeight:400, textAlign:"left", cursor:"pointer", whiteSpace:"nowrap", userSelect:"none" }}>
+  const SortTh = ({k, label}) => <th onClick={()=>sort(k`)} style={{ padding:"7px 10px", fontWeight:400, textAlign:"left", cursor:"pointer", whiteSpace:"nowrap", userSelect:"none" }}>
     {label}{sortKey===k ? (sortDir===1?"▲":"▼") : ""}
   </th>;
 
@@ -657,7 +688,7 @@ function ProductsView({ products, setProducts, user }) {
       </table>
     </div>
 
-    {m==="logs"&&logProduct&&<Modal title={"📦 履歴・入庫: " + logProduct.name} onClose={()=>setM(null)} maxW={540}>
+    {m==="logs"&&logProduct&&<Modal title={`📦 履歴・入庫: ${logProduct.name}`}} onClose={()=>setM(null)} maxW={540}>
       <div style={{ marginBottom:12, display:"flex", justifyContent:"space-between" }}>
         <span style={{ fontSize:14 }}>現在庫: <strong style={{ fontSize:18, color:Number(logProduct.stock)<0?"#dc2626":"#111" }}>{fm(logProduct.stock)} {logProduct.unit}</strong></span>
       </div>

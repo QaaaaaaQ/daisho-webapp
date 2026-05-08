@@ -332,6 +332,32 @@ export async function generateAndDownloadPDF(doc, co) {
     var html2canvas = html2canvasMod.default;
     var jsPDF = jsPDFMod.default;
 
+    // html2canvas前にテーブル列幅を強制適用
+    var tables = wrap.querySelectorAll("table.main");
+    tables.forEach(function(tbl) {
+      tbl.style.tableLayout = "fixed";
+      tbl.style.width = "100%";
+      var ths = tbl.querySelectorAll("th");
+      var tds = tbl.querySelectorAll("td");
+      // 全thのmin-width/max-widthをwidthから強制セット
+      ths.forEach(function(th) {
+        var w = th.style.width;
+        if (w && w !== "auto") {
+          th.style.minWidth = w;
+          th.style.maxWidth = w;
+          th.style.overflow = "hidden";
+        }
+      });
+      tds.forEach(function(td) {
+        var w = td.style.width;
+        if (w && w !== "auto") {
+          td.style.minWidth = w;
+          td.style.maxWidth = w;
+          td.style.overflow = "hidden";
+        }
+      });
+    });
+
     var canvas = await html2canvas(wrap, {
       scale: 2,
       useCORS: true,
@@ -339,6 +365,13 @@ export async function generateAndDownloadPDF(doc, co) {
       backgroundColor: "#ffffff",
       width: 794,
       windowWidth: 794,
+      onclone: function(clonedDoc) {
+        var clonedTables = clonedDoc.querySelectorAll("table.main");
+        clonedTables.forEach(function(tbl) {
+          tbl.style.tableLayout = "fixed";
+          tbl.style.width = "100%";
+        });
+      }
     });
     var imgData = canvas.toDataURL("image/png");
 
