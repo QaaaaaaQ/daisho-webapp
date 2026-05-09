@@ -819,6 +819,7 @@ function LoginScreen({ onSignIn }) {
 export default function App() {
   const [session, setSession] = useState(null);
   const [appLoading, setAppLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [history, setHistory] = useState([]);
   const [co, setCo] = useState(DEFAULT_CO);
   const [products, setProducts] = useState([]);
@@ -841,7 +842,7 @@ export default function App() {
         if (company) setCo({...DEFAULT_CO,...company});
         setProducts(prods||[]);
         setCustomers(custs||[]);
-      } catch(e) { console.error(e); }
+      } catch(e) { console.error(e); setLoadError(e.message); }
     })();
   }, [session]);
 
@@ -849,6 +850,7 @@ export default function App() {
 
   if (appLoading) return <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", fontFamily:"sans-serif", color:"#6b7280", fontSize:14 }}>読み込み中...</div>;
   if (!session) return <LoginScreen onSignIn={signInWithGoogle}/>;
+  if (loadError) return <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100vh", fontFamily:"sans-serif", gap:16 }}><div style={{ color:"#dc2626", fontSize:14 }}>データの読み込みに失敗しました: {loadError}</div><button onClick={()=>window.location.reload()} style={{ padding:"8px 20px", background:"#2563eb", color:"#fff", border:"none", borderRadius:6, cursor:"pointer", fontSize:14 }}>再読み込み</button></div>;
 
   const user = session.user;
   const name = user.user_metadata?.full_name || user.email;

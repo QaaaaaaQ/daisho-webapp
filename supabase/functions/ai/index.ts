@@ -4,7 +4,8 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")!;
+const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY");
+if (!GEMINI_KEY) throw new Error("GEMINI_API_KEY が設定されていません");
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`;
 const YR = new Date().getFullYear();
 
@@ -23,7 +24,7 @@ async function callGemini(systemPrompt: string, userText: string): Promise<strin
     ],
     generationConfig: {
       temperature: 0.2,
-      maxOutputTokens: 3000,
+      maxOutputTokens: 4096,
     }
   };
 
@@ -140,7 +141,15 @@ JSONのみ返してください（コードブロック・説明文・マーク�
         .replace(/\s*```\s*$/m, "")
         .trim();
 
-      const parsed = JSON.parse(clean);
+      let parsed;
+      try {
+        parsed = JSON.parse(clean);
+      } catch (parseErr) {
+        return new Response(JSON.stringify({ error: "JSON解析失敗: " + String(parseErr) + "\n元の応答: " + raw.slice(0, 200) }), {
+          status: 400,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify(parsed), {
         headers: { ...cors, "Content-Type": "application/json" },
       });

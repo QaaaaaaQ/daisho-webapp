@@ -113,8 +113,6 @@ export const db = {
     }
   },
   async deleteProduct(id) {
-    // 先に関連するstock_logsを削除（外部キー制約対策）
-    await supabase.from("stock_logs").delete().eq("product_id", id);
     const { error } = await supabase.from("products").delete().eq("id", id);
     if (error) throw error;
   },

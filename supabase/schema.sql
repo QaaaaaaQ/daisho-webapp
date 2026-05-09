@@ -59,8 +59,8 @@ ALTER TABLE documents        ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "auth_read_company"  ON company_settings FOR SELECT TO authenticated USING (true);
 CREATE POLICY "auth_write_company" ON company_settings FOR ALL    TO authenticated USING (true) WITH CHECK (true);
 
--- documents: 認証済みユーザーは全件読み・自分の書類を編集・削除
-CREATE POLICY "auth_read_docs"   ON documents FOR SELECT TO authenticated USING (true);
+-- documents: 自分の書類のみ読み・編集・削除
+CREATE POLICY "auth_read_docs"   ON documents FOR SELECT TO authenticated USING (auth.uid() = created_by);
 CREATE POLICY "auth_insert_docs" ON documents FOR INSERT TO authenticated WITH CHECK (auth.uid() = created_by);
 CREATE POLICY "auth_update_docs" ON documents FOR UPDATE TO authenticated USING (auth.uid() = created_by);
 CREATE POLICY "auth_delete_docs" ON documents FOR DELETE TO authenticated USING (auth.uid() = created_by);
@@ -132,7 +132,7 @@ CREATE POLICY "auth_customers" ON customers FOR ALL TO authenticated USING (true
 -- 在庫移動履歴
 CREATE TABLE IF NOT EXISTS stock_logs (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id  UUID REFERENCES products(id),
+  product_id  UUID REFERENCES products(id) ON DELETE CASCADE,
   change      NUMERIC NOT NULL,
   reason      TEXT,
   doc_id      UUID,
