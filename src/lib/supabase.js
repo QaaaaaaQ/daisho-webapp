@@ -149,8 +149,10 @@ export const db = {
 };
 
 // ── AI (Gemini Edge Function) ──────────────────────────────
-export async function aiParse(text, company) {
-  const { data, error } = await supabase.functions.invoke("ai", { body: { text, type: "parse", company } });
+export async function aiParse(text, company, customers = [], products = []) {
+  const custNames = customers.map(c => c.name);
+  const prodInfo = products.map(p => ({ name: p.name, origin: p.origin, unit: p.unit, price: p.price }));
+  const { data, error } = await supabase.functions.invoke("ai", { body: { text, type: "parse", company, customers: custNames, products: prodInfo } });
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(data.error);
   return data;

@@ -246,7 +246,34 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
     setInput(""); setLoading(true);
     try {
       if (isDocReq(text)) {
-        const parsed = await aiParse(text, co);
+        const parsed = await aiParse(text, co, customers, products);
+        const norm = s => (s || "").replace(/[\s　]/g, "");
+        // 顧客名: マスターで正式名に補正
+        if (parsed.customer && customers.length > 0 && !customers.find(c => c.name === parsed.customer)) {
+          const fuzzy = customers.find(c => { const a = norm(c.name), b = norm(parsed.customer); return a.includes(b) || b.includes(a); });
+          if (fuzzy) parsed.customer = fuzzy.name;
+        }
+        // 品目なし: 履歴から最新を参照
+        if (!parsed.items || parsed.items.length === 0) {
+          const recent = history.find(h => h.customer === parsed.customer && h.items?.length > 0);
+          if (recent) {
+            parsed.items = recent.items.map(it => ({ ...it, date: tod() }));
+            setMsgs(m => [...m, { id: tid(), role: "assistant", text: `📋 品目未指定のため前回（${recent.date} / ${recent.docType}）の内容を参照しました。` }]);
+          } else {
+            setMsgs(m => [...m, { id: tid(), role: "assistant", text: `📝 「${parsed.customer || "取引先"}」の${parsed.docType || "納品書"}を作成しますが、品目情報が不足しています。品名・数量・単価を入力してください。` }]);
+            setLoading(false);
+            return;
+          }
+        }
+        // 商品マスターで産地・単位・単価を補完
+        if (products.length > 0) {
+          parsed.items = (parsed.items || []).map(item => {
+            if (!item.name) return item;
+            const master = products.find(p => p.name === item.name || norm(p.name) === norm(item.name));
+            if (!master) return item;
+            return { ...item, origin: item.origin || master.origin || "", unit: item.unit || master.unit || "個", price: item.price || master.price || 0, taxRate: item.taxRate || master.taxRate || 8 };
+          });
+        }
         parsed.docNo = newDocNo(parsed.docType||"納品書");
         const msgId = tid();
         setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:true }}));
