@@ -104,7 +104,7 @@ function ItemsEditor({ items, products, onChange }) {
 
 function DirectDocForm({ co, products, customers, history, setHistory, setProducts, setCustomers, user, onClose }) {
   const empty = { date:tod(), origin:"", name:"", qty:"", unit:"", price:"", amount:0, taxRate:8, taxIncluded:false, caseCount:"", qtyPerCase:"" };
-  const [f, setF] = useState({ docType:"納品書", date:tod(), customer:"", subject:"", dueDate:"", expiryDate:"", conditions:"", bank:co.bankA||"", note:"", items:[empty] });
+  const [f, setF] = useState({ docType:"納品書", date:tod(), customer:"", subject:"", dueDate:"", expiryDate:"", conditions:"", bank:co.bankA||"", note:"", amount:"", description:"商品代として", items:[empty] });
   const [saving, setSaving] = useState(false);
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
   const fillCust = (name) => {
@@ -156,8 +156,24 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
       {f.docType==="見積書"&&<Field label="有効期限"><input style={INP} type="date" value={f.expiryDate||""} onChange={e=>upd("expiryDate",e.target.value)}/></Field>}
       {f.docType==="見積書"&&<Field label="取引条件"><input style={INP} value={f.conditions||""} onChange={e=>upd("conditions",e.target.value)} placeholder="例: 現金払い"/></Field>}
     </div>
+    {f.docType==="領収書"&&<div style={{ background:"#faf5ff", border:"1px solid #c4b5fd", borderRadius:8, padding:12, marginBottom:12 }}>
+      <div style={{ fontWeight:500, fontSize:13, marginBottom:10, color:"#7c3aed" }}>🧾 領収書の金額・内容</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+        <Field label="領収金額（税込・円）*">
+          <input style={{ ...INP, fontSize:15, fontWeight:500 }} type="number" value={f.amount||""} onChange={e=>upd("amount",e.target.value)} placeholder="例: 50000"/>
+        </Field>
+        <Field label="但し書き">
+          <input style={INP} value={f.description||"商品代として"} onChange={e=>upd("description",e.target.value)} placeholder="商品代として"/>
+        </Field>
+      </div>
+      {f.amount&&<div style={{ textAlign:"right", fontSize:14, color:"#7c3aed", fontWeight:500 }}>
+        {"領収金額: ¥" + Number(f.amount).toLocaleString("ja-JP") + " -"}
+      </div>}
+    </div>}
+    {f.docType!=="領収書"&&<>
     <div style={{ fontWeight:500, fontSize:13, marginBottom:8, color:"#374151" }}>品目</div>
     <ItemsEditor items={f.items} products={products} onChange={items=>upd("items",items)}/>
+    </>}
     <Field label="備考"><input style={{ ...INP, marginTop:10 }} value={f.note} onChange={e=>upd("note",e.target.value)} placeholder="任意"/></Field>
     <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"flex-end" }}>
       <Btn onClick={onClose}>キャンセル</Btn>
@@ -230,98 +246,39 @@ function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
 }
 
 function ChatView({ co, products, customers, history, setHistory, setProducts, setCustomers, user }) {
-  const [msgs, setMsgs] = useState([{ role:"assistant", text:"こんにちは！\n自然な言葉で書類を作成できます。\n例：「平家茶屋 前回と同じ」「5/5 金誠 真河豚ドレス30×1,700円 納品書」" }]);
+  const [msgs, setMsgs] = useState([{ role:"assistant", text:"こんにちは！\n自然な言葉で書類を作成できます。\n例：「5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書お願いします」" }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [docStates, setDocStates] = useState({});
   const [editTarget, setEditTarget] = useState(null);
   const [showDirect, setShowDirect] = useState(false);
-  const [previewDoc, setPreviewDoc] = useState(null);
-  const [previewSaved, setPreviewSaved] = useState(false);
-  const [custSugg, setCustSugg] = useState([]);
   const bottomRef = useRef(null);
-  const inputRef = useRef(null);
-  const SUGG = ["平家茶屋 前回と同じ","5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書","4月分 TEN&A さざえ請求書"];
+  const SUGG = ["5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書","4月分 TEN&A さざえ請求書","藤屋 まふぐ刺身6パック×6,600円 納品書"];
   useEffect(()=>{ bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [msgs, loading]);
-
-  const norm = s => (s || "").replace(/[\s　]/g, "");
-  const isPrevReq = (t) => /前回|前と同|いつも通|同じ内容|同じで/.test(t) && !isDocReq(t);
-  const findCustomerInText = (text) => customers.find(c => text.includes(c.name) || norm(text).includes(norm(c.name)));
-
-  const doSaveDoc = async (doc) => {
-    const saved = await db.saveDocument(doc, user);
-    const result = await autoRegisterAndStock({...doc, id:saved.id}, user);
-    if (result.newCustomer || result.newProducts.length > 0) {
-      const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
-      setProducts(prods); setCustomers(custs);
-    } else if (result.stockLogs.length > 0) { setProducts(await db.getProducts()); }
-    setHistory(h=>[saved,...h]);
-    return { saved, result };
-  };
 
   const send = async (text) => {
     if (!text.trim() || loading) return;
     setMsgs(m=>[...m, { id:tid(), role:"user", text:text.trim() }]);
-    setInput(""); setCustSugg([]); setLoading(true);
+    setInput(""); setLoading(true);
     try {
-      // ① 「前回と同じ」検知: AI呼び出しなしで履歴から直接参照
-      if (isPrevReq(text)) {
-        const matchedCust = findCustomerInText(text);
-        const recent = matchedCust
-          ? history.find(h => h.customer === matchedCust.name && h.items?.length > 0)
-          : history.find(h => h.items?.length > 0);
-        if (recent) {
-          const msgId = tid();
-          const doc = { ...recent, date: tod(), docNo: newDocNo(recent.docType), id: undefined };
-          setPreviewDoc(doc); setPreviewSaved(false);
-          setMsgs(m=>[...m, { id:msgId, role:"assistant",
-            text:`📋 ${recent.customer}（${recent.date} / ${recent.docType}）を参照しました。右のプレビューを確認してください。`,
-            doc, chips:["✅ この内容で発行", "📅 日付を今日に変更", "📄 請求書も作成"] }]);
-          setLoading(false); return;
-        } else {
-          setMsgs(m=>[...m, { id:tid(), role:"assistant", text:"履歴が見つかりませんでした。品目を含めて入力してください。" }]);
-          setLoading(false); return;
-        }
-      }
-
       if (isDocReq(text)) {
-        const parsed = await aiParse(text, co, customers, products);
-        // 顧客名: マスターで正式名に補正
-        if (parsed.customer && customers.length > 0 && !customers.find(c => c.name === parsed.customer)) {
-          const fuzzy = customers.find(c => { const a = norm(c.name), b = norm(parsed.customer); return a.includes(b) || b.includes(a); });
-          if (fuzzy) parsed.customer = fuzzy.name;
-        }
-        // 品目なし: 履歴から最新を参照
-        if (!parsed.items || parsed.items.length === 0) {
-          const recent = history.find(h => h.customer === parsed.customer && h.items?.length > 0);
-          if (recent) {
-            parsed.items = recent.items.map(it => ({ ...it, date: tod() }));
-            setMsgs(m=>[...m, { id:tid(), role:"assistant", text:`📋 品目未指定のため前回（${recent.date} / ${recent.docType}）の内容を参照しました。` }]);
-          } else {
-            setMsgs(m=>[...m, { id:tid(), role:"assistant", text:`📝 「${parsed.customer||"取引先"}」の${parsed.docType||"納品書"}を作成しますが、品目情報が不足しています。品名・数量・単価を入力してください。` }]);
-            setLoading(false); return;
-          }
-        }
-        // 商品マスターで産地・単位・単価を補完
-        if (products.length > 0) {
-          parsed.items = (parsed.items||[]).map(item => {
-            if (!item.name) return item;
-            const master = products.find(p => p.name === item.name || norm(p.name) === norm(item.name));
-            if (!master) return item;
-            return { ...item, origin: item.origin||master.origin||"", unit: item.unit||master.unit||"個", price: item.price||master.price||0, taxRate: item.taxRate||master.taxRate||8 };
-          });
-        }
+        const parsed = await aiParse(text, co);
         parsed.docNo = newDocNo(parsed.docType||"納品書");
         const msgId = tid();
         setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:true }}));
-        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:(parsed.docType||"納品書")+"を作成中...", doc:parsed }]);
-        setPreviewDoc(parsed); setPreviewSaved(false);
+        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:(parsed.docType||"納品書")+"を作成しました。自動保存中...", doc:parsed }]);
         try {
-          const { saved, result } = await doSaveDoc(parsed);
+          const saved = await db.saveDocument(parsed, user);
+          const result = await autoRegisterAndStock({...parsed, id:saved.id}, user);
+          if (result.newCustomer || result.newProducts.length > 0) {
+            const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
+            setProducts(prods); setCustomers(custs);
+          } else if (result.stockLogs.length > 0) {
+            setProducts(await db.getProducts());
+          }
+          setHistory(h=>[saved,...h]);
           setDocStates(s=>({...s,[msgId]:{ doc:saved, saved:true, saving:false }}));
-          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(saved.docType||"納品書")+"を保存しました ✓", doc:saved,
-            chips:["📄 PDFを生成", "📄 請求書も作成", "同じ取引先でもう1枚"] } : msg));
-          setPreviewDoc(saved); setPreviewSaved(true);
+          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(saved.docType||"納品書")+"を自動保存しました ✓", doc:saved} : msg));
           const autoMsgs = [];
           if (result.newCustomer) autoMsgs.push(`顧客「${result.newCustomer}」を登録`);
           if (result.newProducts.length>0) autoMsgs.push(`商品「${result.newProducts.join("・")}」を登録`);
@@ -348,15 +305,23 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
             const updatedItems = (targetDoc.items||[]).map(it=>itemNames.includes(it.name)?{...it,origin}:it);
             const updated = await db.updateDocument(docId, {...targetDoc, items:updatedItems});
             setHistory(h=>h.map(x=>x.id===docId?updated:x));
-            setDocStates(s=>{ const ns={...s}; Object.keys(ns).forEach(mid=>{ if(ns[mid]?.doc?.id===docId) ns[mid]={...ns[mid],doc:updated}; }); return ns; });
+            // チャット上のDocCardも更新
+            setDocStates(s=>{
+              const newS = {...s};
+              Object.keys(newS).forEach(msgId=>{
+                if (newS[msgId]?.doc?.id===docId) {
+                  newS[msgId] = {...newS[msgId], doc:updated};
+                }
+              });
+              return newS;
+            });
             setMsgs(m=>m.map(msg=>msg.doc?.id===docId ? {...msg, doc:updated} : msg));
-            if (previewDoc?.id===docId) setPreviewDoc(updated);
             for (const name of itemNames) {
               const { data:prod } = await supabase.from("products").select("id").eq("name",name).maybeSingle();
               if (prod) await supabase.from("products").update({origin}).eq("id",prod.id);
             }
             setProducts(await db.getProducts());
-            setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:`✅ 「${itemNames.join("・")}」の産地を「${origin}」に設定しました。` }]);
+            setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:`✅ 「${itemNames.join("・")}」の産地を「${origin}」に設定しました。納品書のPDFを再生成してください。` }]);
           }
         } else {
           const apiMsgs = msgs.slice(-8).map(m=>({ role:m.role, content:m.text }));
@@ -369,153 +334,50 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
     setLoading(false);
   };
 
-  // ③ クイックアクション chips
-  const handleChip = async (chip, msg) => {
-    const doc = docStates[msg.id]?.doc || msg.doc || previewDoc;
-    if (chip === "✅ この内容で発行") {
-      if (!doc) return;
-      try {
-        const { saved } = await doSaveDoc(doc);
-        setPreviewDoc(saved); setPreviewSaved(true);
-        setMsgs(m=>m.map(x=>x.id===msg.id ? {...x, text:`${saved.docType}（${saved.customer}）を発行しました ✓`, doc:saved, chips:["📄 PDFを生成", "📄 請求書も作成"]} : x));
-      } catch(e) { alert("発行エラー: " + e.message); }
-    } else if (chip === "📅 日付を今日に変更") {
-      if (!doc) return;
-      const updated = {...doc, date:tod(), items:(doc.items||[]).map(it=>({...it, date:tod()}))};
-      setPreviewDoc(updated);
-      setMsgs(m=>m.map(x=>x.id===msg.id ? {...x, doc:updated, text:`日付を本日（${tod()}）に変更しました。右のプレビューを確認してください。`} : x));
-    } else if (chip === "📄 PDFを生成") {
-      if (doc) generateAndDownloadPDF(doc, co);
-    } else if (chip === "📄 請求書も作成") {
-      if (doc) send(`${doc.customer} 上記内容で請求書を作成`);
-    } else if (chip === "同じ取引先でもう1枚") {
-      if (doc) setInput(doc.customer + " 前回と同じ");
-    }
+  const handleEditSave = (newDoc) => {
+    setDocStates(s=>({...s,[editTarget.msgId]:{ ...s[editTarget.msgId], doc:newDoc, saved:false }}));
+    setMsgs(m=>m.map(msg=>msg.id===editTarget.msgId?{...msg,doc:newDoc}:msg));
+    setEditTarget(null);
   };
 
-  // ④ 顧客名オートコンプリート
-  const handleInputChange = (e) => {
-    const val = e.target.value;
-    setInput(val);
-    if (val.trim().length >= 1 && customers.length > 0) {
-      const words = val.trim().split(/\s+/);
-      const q = norm(words[words.length - 1]);
-      if (q.length >= 1) {
-        const matches = customers.filter(c => norm(c.name).includes(q) && norm(c.name) !== q);
-        setCustSugg(matches.slice(0, 4));
-      } else { setCustSugg([]); }
-    } else { setCustSugg([]); }
-  };
-
-  const pickCust = (c) => {
-    const lastSpaceIdx = input.lastIndexOf(" ");
-    const newInput = (lastSpaceIdx >= 0 ? input.slice(0, lastSpaceIdx + 1) : "") + c.name + " ";
-    setInput(newInput); setCustSugg([]); inputRef.current?.focus();
-  };
-
-  return <div style={{ display:"flex", height:"100%" }}>
-    {/* 左: チャット */}
-    <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0, borderRight:previewDoc?"1px solid #e5e7eb":"none" }}>
-      <div style={{ padding:"8px 16px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8 }}>
-        <Btn small variant="primary" onClick={()=>setShowDirect(true)}>📝 直接作成</Btn>
-        <span style={{ fontSize:11, color:"#9ca3af", alignSelf:"center" }}>または下のチャットでAI作成</span>
-      </div>
-      <div style={{ flex:1, overflowY:"auto", padding:"14px 18px", display:"flex", flexDirection:"column", gap:10 }}>
-        {msgs.map((msg,i)=>{
-          const isUser = msg.role==="user";
-          const ds = msg.id ? docStates[msg.id] : null;
-          const curDoc = ds?.doc || msg.doc;
-          return <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:isUser?"flex-end":"flex-start" }}>
-            <div style={{ maxWidth:"78%", background:isUser?N:"#f3f4f6", color:isUser?"#fff":"#111", borderRadius:isUser?"12px 12px 3px 12px":"12px 12px 12px 3px", padding:"9px 13px", fontSize:13, lineHeight:1.6, whiteSpace:"pre-wrap" }}>{msg.text}</div>
-            {curDoc&&<DocCard doc={curDoc} co={co}
-              onEdit={()=>setEditTarget({ msgId:msg.id, doc:curDoc })}
-              onPrint={()=>generateAndDownloadPDF(curDoc,co)}
-              saved={ds?.saved||false} saving={ds?.saving||false}
-            />}
-            {msg.chips&&<div style={{ display:"flex", gap:5, flexWrap:"wrap", marginTop:5 }}>
-              {msg.chips.map((chip,ci)=><button key={ci} onClick={()=>handleChip(chip,msg)}
-                style={{ padding:"4px 10px", background:"#eff6ff", border:"1px solid #bfdbfe", borderRadius:12, fontSize:11, cursor:"pointer", color:"#1d4ed8", fontFamily:"inherit" }}>
-                {chip}
-              </button>)}
-            </div>}
-          </div>;
-        })}
-        {loading&&<div style={{ display:"flex" }}><div style={{ background:"#f3f4f6", borderRadius:"12px 12px 12px 3px", padding:"9px 13px" }}><span style={{ display:"inline-flex", gap:4 }}>{[0,1,2].map(i=><span key={i} style={{ width:5, height:5, borderRadius:"50%", background:"#9ca3af", display:"inline-block", animation:"blink 1.2s infinite", animationDelay:`${i*0.2}s` }}/>)}</span></div></div>}
-        <div ref={bottomRef}/>
-      </div>
-      {msgs.length<=1&&<div style={{ padding:"0 18px 8px", display:"flex", gap:6, flexWrap:"wrap" }}>
-        {SUGG.map((s,i)=><button key={i} onClick={()=>send(s)} style={{ padding:"5px 11px", background:"#f3f4f6", border:"1px solid #e5e7eb", borderRadius:16, fontSize:11, cursor:"pointer", color:"#374151", fontFamily:"inherit" }}>{s}</button>)}
-      </div>}
-      <div style={{ padding:"10px 18px", borderTop:"1px solid #f0f0f0", position:"relative" }}>
-        {custSugg.length>0&&<div style={{ position:"absolute", bottom:"100%", left:18, right:18, background:"#fff", border:"1px solid #e5e7eb", borderRadius:8, boxShadow:"0 4px 16px rgba(0,0,0,0.12)", zIndex:50, marginBottom:4 }}>
-          {custSugg.map((c,i)=><div key={i} onClick={()=>pickCust(c)}
-            style={{ padding:"7px 12px", cursor:"pointer", fontSize:13, borderBottom:i<custSugg.length-1?"1px solid #f3f4f6":"none", display:"flex", justifyContent:"space-between", alignItems:"center" }}
-            onMouseEnter={e=>e.currentTarget.style.background="#f9fafb"} onMouseLeave={e=>e.currentTarget.style.background=""}>
-            <span style={{ fontWeight:500 }}>{c.name}</span>
-            {c.addr&&<span style={{ fontSize:11, color:"#9ca3af", marginLeft:8, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.addr}</span>}
-          </div>)}
-        </div>}
-        <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
-          <textarea ref={inputRef} value={input} onChange={handleInputChange}
-            onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(input); } else if(e.key==="Escape") setCustSugg([]); }}
-            placeholder="例：平家茶屋 前回と同じ / 金誠 5/5 真河豚ドレス30×1,700円 納品書"
-            style={{ flex:1, padding:"9px 11px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:13, fontFamily:"inherit", outline:"none", resize:"none", minHeight:42, maxHeight:110, lineHeight:1.5 }}
-            rows={1} onInput={e=>{ e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,110)+"px"; }}
-          />
-          <button onClick={()=>send(input)} disabled={!input.trim()||loading}
-            style={{ padding:"9px 14px", background:N, color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:13, fontFamily:"inherit", height:42, opacity:(!input.trim()||loading)?0.5:1 }}>送信 ↑</button>
-        </div>
+  return <div style={{ display:"flex", flexDirection:"column", height:"100%" }}>
+    <div style={{ padding:"8px 16px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8 }}>
+      <Btn small variant="primary" onClick={()=>setShowDirect(true)}>📝 直接作成</Btn>
+      <span style={{ fontSize:11, color:"#9ca3af", alignSelf:"center" }}>または下のチャットでAI作成</span>
+    </div>
+    <div style={{ flex:1, overflowY:"auto", padding:"14px 18px", display:"flex", flexDirection:"column", gap:10 }}>
+      {msgs.map((msg,i)=>{
+        const isUser = msg.role==="user";
+        const ds = msg.id ? docStates[msg.id] : null;
+        const curDoc = ds?.doc || msg.doc;
+        return <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:isUser?"flex-end":"flex-start" }}>
+          <div style={{ maxWidth:"78%", background:isUser?N:"#f3f4f6", color:isUser?"#fff":"#111", borderRadius:isUser?"12px 12px 3px 12px":"12px 12px 12px 3px", padding:"9px 13px", fontSize:13, lineHeight:1.6, whiteSpace:"pre-wrap" }}>{msg.text}</div>
+          {curDoc&&<DocCard doc={curDoc} co={co}
+            onEdit={()=>setEditTarget({ msgId:msg.id, doc:curDoc })}
+            onPrint={()=>generateAndDownloadPDF(curDoc,co)}
+            saved={ds?.saved||false} saving={ds?.saving||false}
+          />}
+        </div>;
+      })}
+      {loading&&<div style={{ display:"flex" }}><div style={{ background:"#f3f4f6", borderRadius:"12px 12px 12px 3px", padding:"9px 13px" }}><span style={{ display:"inline-flex", gap:4 }}>{[0,1,2].map(i=><span key={i} style={{ width:5, height:5, borderRadius:"50%", background:"#9ca3af", display:"inline-block", animation:"blink 1.2s infinite", animationDelay:`${i*0.2}s` }}/>)}</span></div></div>}
+      <div ref={bottomRef}/>
+    </div>
+    {msgs.length<=1&&<div style={{ padding:"0 18px 8px", display:"flex", gap:6, flexWrap:"wrap" }}>
+      {SUGG.map((s,i)=><button key={i} onClick={()=>send(s)} style={{ padding:"5px 11px", background:"#f3f4f6", border:"1px solid #e5e7eb", borderRadius:16, fontSize:11, cursor:"pointer", color:"#374151", fontFamily:"inherit" }}>{s}</button>)}
+    </div>}
+    <div style={{ padding:"10px 18px", borderTop:"1px solid #f0f0f0" }}>
+      <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
+        <textarea value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(input); } }}
+          placeholder="例：5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書（Shift+Enterで改行）"
+          style={{ flex:1, padding:"9px 11px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:13, fontFamily:"inherit", outline:"none", resize:"none", minHeight:42, maxHeight:110, lineHeight:1.5 }}
+          rows={1} onInput={e=>{ e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,110)+"px"; }}
+        />
+        <button onClick={()=>send(input)} disabled={!input.trim()||loading}
+          style={{ padding:"9px 14px", background:N, color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:13, fontFamily:"inherit", height:42, opacity:(!input.trim()||loading)?0.5:1 }}>送信 ↑</button>
       </div>
     </div>
-    {/* 右: リアルタイムプレビュー */}
-    {previewDoc&&<div style={{ width:370, flexShrink:0, display:"flex", flexDirection:"column", background:"#f9fafb" }}>
-      <div style={{ padding:"10px 14px", borderBottom:"1px solid #e5e7eb", display:"flex", justifyContent:"space-between", alignItems:"center", background:"#fff" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <span style={{ fontWeight:600, fontSize:13 }}>プレビュー</span>
-          <span style={{ fontSize:11, padding:"2px 8px", borderRadius:10, fontWeight:500,
-            background:previewSaved?"#dcfce7":"#fef9c3", color:previewSaved?"#16a34a":"#92400e" }}>
-            {previewSaved?"✓ 発行済み":"下書き"}
-          </span>
-        </div>
-        <button onClick={()=>setPreviewDoc(null)} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af", fontSize:20 }}>×</button>
-      </div>
-      <div style={{ flex:1, overflowY:"auto", padding:14 }}>
-        <DocCard doc={previewDoc} co={co}
-          onEdit={()=>setEditTarget({ msgId:"preview", doc:previewDoc })}
-          onPrint={()=>generateAndDownloadPDF(previewDoc,co)}
-          saved={previewSaved} saving={false}
-        />
-        {!previewSaved&&<div style={{ marginTop:10, display:"flex", flexDirection:"column", gap:6 }}>
-          <Btn variant="primary" onClick={async()=>{
-            try {
-              const { saved } = await doSaveDoc(previewDoc);
-              setPreviewDoc(saved); setPreviewSaved(true);
-              setMsgs(m=>[...m, { id:tid(), role:"assistant", text:`✅ ${saved.docType}（${saved.customer}）を発行しました。`, chips:["📄 PDFを生成"] }]);
-            } catch(e) { alert("発行エラー: " + e.message); }
-          }}>✅ この内容で発行</Btn>
-          <Btn onClick={()=>{ const u={...previewDoc,date:tod(),items:(previewDoc.items||[]).map(it=>({...it,date:tod()}))}; setPreviewDoc(u); }}>📅 日付を今日に変更</Btn>
-        </div>}
-        {previewSaved&&<div style={{ marginTop:10 }}>
-          <Btn variant="primary" onClick={()=>generateAndDownloadPDF(previewDoc,co)}>📄 PDFを生成</Btn>
-        </div>}
-      </div>
-    </div>}
-    {editTarget&&<DocEditModal doc={editTarget.doc} co={co} products={products||[]} onClose={()=>setEditTarget(null)} onSave={async(nd)=>{
-      if (editTarget.msgId==="preview") { setPreviewDoc(nd); setEditTarget(null); return; }
-      if (nd.id) {
-        try {
-          const updated = await db.updateDocument(nd.id, nd);
-          setHistory(h=>h.map(x=>x.id===nd.id?updated:x));
-          setDocStates(s=>({...s,[editTarget.msgId]:{ ...s[editTarget.msgId], doc:updated }}));
-          setMsgs(m=>m.map(msg=>msg.id===editTarget.msgId?{...msg,doc:updated}:msg));
-          if (previewDoc?.id===nd.id) { setPreviewDoc(updated); }
-        } catch(e) { alert("更新エラー: " + e.message); }
-      } else {
-        setDocStates(s=>({...s,[editTarget.msgId]:{ ...s[editTarget.msgId], doc:nd, saved:false }}));
-        setMsgs(m=>m.map(msg=>msg.id===editTarget.msgId?{...msg,doc:nd}:msg));
-      }
-      setEditTarget(null);
-    }}/>}
+    {editTarget&&<DocEditModal doc={editTarget.doc} co={co} products={products} onClose={()=>setEditTarget(null)} onSave={handleEditSave}/>}
     {showDirect&&<DirectDocForm co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user} onClose={()=>setShowDirect(false)}/>}
     <style>{`@keyframes blink{0%,80%,100%{opacity:0}40%{opacity:1}}`}</style>
   </div>;
@@ -973,7 +835,6 @@ function LoginScreen({ onSignIn }) {
 export default function App() {
   const [session, setSession] = useState(null);
   const [appLoading, setAppLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
   const [history, setHistory] = useState([]);
   const [co, setCo] = useState(DEFAULT_CO);
   const [products, setProducts] = useState([]);
@@ -996,7 +857,7 @@ export default function App() {
         if (company) setCo({...DEFAULT_CO,...company});
         setProducts(prods||[]);
         setCustomers(custs||[]);
-      } catch(e) { console.error(e); setLoadError(e.message); }
+      } catch(e) { console.error(e); }
     })();
   }, [session]);
 
@@ -1004,7 +865,6 @@ export default function App() {
 
   if (appLoading) return <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", fontFamily:"sans-serif", color:"#6b7280", fontSize:14 }}>読み込み中...</div>;
   if (!session) return <LoginScreen onSignIn={signInWithGoogle}/>;
-  if (loadError) return <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100vh", fontFamily:"sans-serif", gap:16 }}><div style={{ color:"#dc2626", fontSize:14 }}>データの読み込みに失敗しました: {loadError}</div><button onClick={()=>window.location.reload()} style={{ padding:"8px 20px", background:"#2563eb", color:"#fff", border:"none", borderRadius:6, cursor:"pointer", fontSize:14 }}>再読み込み</button></div>;
 
   const user = session.user;
   const name = user.user_metadata?.full_name || user.email;

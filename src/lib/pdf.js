@@ -28,8 +28,8 @@ export function calcTax(items) {
 
 // ── 右上ブロック: メタ情報 + ロゴ(2倍) + 社名(角印背景) ──────
 function coBlock(co, date, no, typeLabel) {
-  const dateLabel = typeLabel === "納品書" ? "納品日" : typeLabel === "見積書" ? "見積日" : "請求日";
-  const noLabel   = typeLabel === "納品書" ? "納品書番号" : typeLabel === "見積書" ? "見積書番号" : "請求書番号";
+  const dateLabel = typeLabel === "納品書" ? "納品日" : typeLabel === "見積書" ? "見積日" : typeLabel === "領収書" ? "発行日" : "請求日";
+  const noLabel   = typeLabel === "納品書" ? "納品書番号" : typeLabel === "見積書" ? "見積書番号" : typeLabel === "領収書" ? "領収書番号" : "請求書番号";
 
   // ロゴ: 2倍サイズ
   const logoHtml = (co && co.logoImg)
@@ -279,9 +279,6 @@ export function buildReceiptHTML(doc, co) {
   const tax  = Math.round(amt - amt/1.08);
   const no   = doc.docNo || "REC-" + Date.now();
   const date = fd(doc.date) || new Date().toISOString().slice(0,10);
-  var receiptSealImg = (co && co.sealImg)
-    ? '<img src="' + co.sealImg + '" style="width:100px;height:100px;object-fit:contain;opacity:0.60"/>'
-    : '';
   return '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>領収書 ' + no + '</title>' + baseCSS() + '</head><body>' +
     '<h1>領　収　書</h1>' +
     '<div class="hd"><div>' +
@@ -295,10 +292,6 @@ export function buildReceiptHTML(doc, co) {
     '</div>' +
     '<div style="font-size:9pt;margin:3mm 0">但し　' + (doc.description||"商品代として") + '</div>' +
     '<div style="font-size:9pt">上記金額を確かに領収いたしました。</div>' +
-    '<div style="display:flex;align-items:center;gap:3mm;justify-content:flex-end;margin-top:6mm">' +
-      '<div style="font-size:10pt;font-weight:bold">' + (co.name||"") + '</div>' +
-      receiptSealImg +
-    '</div>' +
     '</body></html>';
 }
 
