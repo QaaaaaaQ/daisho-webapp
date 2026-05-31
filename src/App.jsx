@@ -554,7 +554,9 @@ function ProductsView({ products, setProducts, user }) {
   const [logProduct, setLogProduct] = useState(null);
   const [sortKey, setSortKey] = useState("code");
   const [sortDir, setSortDir] = useState(1);
+  const [catFilter, setCatFilter] = useState("全て");
   const [receiving, setReceiving] = useState({ qty:"", supplier:"", note:"" });
+  const categories = [...new Set(products.map(p=>p.category).filter(Boolean))].sort();
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
   const updR = (k,v) => setReceiving(x=>({...x,[k]:v}));
   const sort = (key) => { if(sortKey===key) setSortDir(d=>-d); else { setSortKey(key); setSortDir(1); } };
@@ -563,7 +565,7 @@ function ProductsView({ products, setProducts, user }) {
     if(!isNaN(Number(av))&&!isNaN(Number(bv))) return (Number(av)-Number(bv))*sortDir;
     return String(av).localeCompare(String(bv),"ja")*sortDir;
   });
-  const open = (p) => { setF(p||{ name:"", code:"", origin:"", unit:"kg", price:"", purchasePrice:"", taxRate:8, caseQty:"", qtyPerCase:"", stock:0, note:"" }); setM("edit"); };
+  const open = (p) => { setF(p||{ name:"", code:"", category:"", origin:"", unit:"kg", price:"", purchasePrice:"", taxRate:8, caseQty:"", qtyPerCase:"", stock:0, note:"" }); setM("edit"); };
   const openLogs = async (p) => { setLogProduct(p); setLogs(await getStockLogs(p.id)); setM("logs"); };
   const save = async () => {
     if (!f.name) { alert("商品名は必須です"); return; }
@@ -598,6 +600,10 @@ function ProductsView({ products, setProducts, user }) {
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
     <div style={{ padding:"10px 16px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
       <span style={{ fontWeight:500, fontSize:14 }}>{"商品マスター（" + products.length + "件）"}</span>
+      <select style={{ ...SEL, width:110 }} value={catFilter} onChange={e=>setCatFilter(e.target.value)}>
+        <option>全て</option>
+        {categories.map(c=><option key={c} value={c}>{c}</option>)}
+      </select>
       <span style={{ fontSize:11, color:"#9ca3af" }}>▲▼ヘッダークリックで並び替え</span>
       <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
         <Btn small onClick={doMerge} style={{ background:"#f59e0b", color:"#fff", border:"none" }}>🔀 重複マージ</Btn>
@@ -608,6 +614,7 @@ function ProductsView({ products, setProducts, user }) {
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
         <thead><tr style={{ background:N, color:"#fff" }}>
           <SortTh k="code" label="コード"/>
+          <SortTh k="category" label="分類"/>
           <SortTh k="name" label="商品名"/>
           <SortTh k="origin" label="産地"/>
           <SortTh k="unit" label="単位"/>
@@ -619,10 +626,11 @@ function ProductsView({ products, setProducts, user }) {
           <th style={{ padding:"7px 10px", fontWeight:400 }}>操作</th>
         </tr></thead>
         <tbody>
-          {sorted.map((p,i)=>{
+          {sorted.filter(p=>catFilter==="全て"||p.category===catFilter).map((p,i)=>{
             const margin = (p.purchasePrice&&p.price&&Number(p.price)>0) ? Math.round((1-Number(p.purchasePrice)/Number(p.price))*100) : null;
             return <tr key={p.id} style={{ background:i%2===0?"#fff":"#f9fafb", borderBottom:"1px solid #f0f0f0" }}>
               <td style={{ padding:"6px 10px", color:"#9ca3af" }}>{p.code}</td>
+              <td style={{ padding:"6px 10px" }}>{p.category&&<span style={{ fontSize:11, background:"#eef2ff", color:"#3730a3", padding:"1px 7px", borderRadius:10 }}>{p.category}</span>}</td>
               <td style={{ padding:"6px 10px", fontWeight:500 }}>{p.name}</td>
               <td style={{ padding:"6px 10px" }}>{p.origin}</td>
               <td style={{ padding:"6px 10px" }}>{p.unit}</td>
@@ -642,7 +650,7 @@ function ProductsView({ products, setProducts, user }) {
               </td>
             </tr>;
           })}
-          {products.length===0&&<tr><td colSpan={10} style={{ textAlign:"center", padding:32, color:"#9ca3af" }}>商品を登録してください</td></tr>}
+          {products.length===0&&<tr><td colSpan={11} style={{ textAlign:"center", padding:32, color:"#9ca3af" }}>商品を登録してください</td></tr>}
         </tbody>
       </table>
     </div>
@@ -691,7 +699,11 @@ function ProductsView({ products, setProducts, user }) {
     </Modal>}
     {m==="edit"&&<Modal title={f.id?"商品編集":"商品登録"} onClose={()=>setM(null)}>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-        <Field label="商品コード"><input style={INP} value={f.code||""} onChange={e=>upd("code",e.target.value)} placeholder="P001"/></Field>
+        <Field label="商品コード"><input style={INP} value={f.code||""} onChange={e=>upd("code",e.target.value)} placeholder="FG-001"/></Field>
+        <Field label="分類">
+          <input style={INP} list="product-category-list" value={f.category||""} onChange={e=>upd("category",e.target.value)} placeholder="ふぐ類 / 貝類"/>
+          <datalist id="product-category-list"><option value="ふぐ類"/><option value="貝類"/></datalist>
+        </Field>
         <Field label="商品名 *"><input style={INP} value={f.name||""} onChange={e=>upd("name",e.target.value)} placeholder="韓国産養殖活アワビ"/></Field>
         <Field label="産地"><input style={INP} value={f.origin||""} onChange={e=>upd("origin",e.target.value)} placeholder="韓国産"/></Field>
         <Field label="単位"><input style={INP} value={f.unit||""} onChange={e=>upd("unit",e.target.value)} placeholder="kg"/></Field>
