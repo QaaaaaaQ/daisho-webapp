@@ -118,7 +118,14 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
     try {
       const doc = { ...f, docNo: newDocNo(f.docType) };
       const saved = await db.saveDocument(doc, user);
-      setHistory(h=>[saved,...h]);
+      if (saved._duplicate) {
+        // 重複検知: 出庫処理はスキップ（在庫の二重減算防止）。PDFは既存書類で生成可
+        setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
+        if (print) await generateAndDownloadPDF(saved, co);
+        alert("⚠️ 同じ内容の"+(saved.docType||"書類")+"が既に作成済みです（"+saved.docNo+"）。\n重複作成を防止しました。");
+        onClose(); setSaving(false); return;
+      }
+      setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
       const result = await autoRegisterAndStock({...doc, id:saved.id}, user);
       if (result.newCustomer || result.newProducts.length > 0) {
         const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
@@ -133,7 +140,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
       if (result.stockLogs.length > 0) msgs.push("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
       if (msgs.length > 0) alert(msgs.join("\n"));
       onClose();
-    } catch(e) { alert("エラー: " + e.message); }
+    } catch(e) { alert((e._duplicate ? "⚠️ " : "エラー: ") + e.message); }
     setSaving(false);
   };
   return <Modal title={`📝 ${f.docType}を直接作成`} onClose={onClose} maxW={900} tall>
@@ -269,6 +276,12 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
         setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:(parsed.docType||"納品書")+"を作成しました。自動保存中...", doc:parsed }]);
         try {
           const saved = await db.saveDocument(parsed, user);
+          if (saved._duplicate) {
+            // 重複検知: 出庫処理(autoRegisterAndStock)はスキップし在庫の二重減算を防ぐ。既存書類を表示
+            setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
+            setDocStates(s=>({...s,[msgId]:{ doc:saved, saved:true, saving:false }}));
+            setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:"⚠️ 同じ内容の"+(saved.docType||"書類")+"が既に作成済みです（"+saved.docNo+"）。重複作成を防ぎました。", doc:saved} : msg));
+          } else {
           const result = await autoRegisterAndStock({...parsed, id:saved.id}, user);
           if (result.newCustomer || result.newProducts.length > 0) {
             const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
@@ -276,7 +289,7 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
           } else if (result.stockLogs.length > 0) {
             setProducts(await db.getProducts());
           }
-          setHistory(h=>[saved,...h]);
+          setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
           setDocStates(s=>({...s,[msgId]:{ doc:saved, saved:true, saving:false }}));
           setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(saved.docType||"納品書")+"を自動保存しました ✓", doc:saved} : msg));
           const autoMsgs = [];
@@ -291,9 +304,11 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
               text:`📍 「${names}」の産地が未設定です。国産ですか？\n（「国産」「韓国産」「中国産」など返信してください）`,
               pendingOrigin:{ docId:saved.id, items:noOriginItems.map(it=>it.name) } }]);
           }
+          }
         } catch(saveErr) {
           setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:false }}));
-          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(parsed.docType||"納品書")+"を作成しました（保存エラー: "+saveErr.message+"）"} : msg));
+          const failText = saveErr._duplicate ? "⚠️ " + saveErr.message : (parsed.docType||"納品書")+"を作成しました（保存エラー: "+saveErr.message+"）";
+          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:failText} : msg));
         }
       } else {
         const lastPending = [...msgs].reverse().find(m=>m.pendingOrigin);
@@ -417,20 +432,28 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
       dueDate:batchDueDate, bank:batchBank, items:allItems };
     try {
       const saved = await db.saveDocument(inv, user||{id:"batch",email:"batch"});
-      setHistory(h=>[saved,...h]);
+      setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
       clearCheck(); setBatchMode(false); setBatchModal(false);
-      alert("請求書を発行しました: " + saved.docNo + "\n取引先: " + customer + "\n品目数: " + String(allItems.length));
-      generateAndDownloadPDF(saved, co);
-    } catch(e) { alert("エラー: " + e.message); }
+      if (saved._duplicate) {
+        alert("⚠️ 同じ内容の請求書が既にあります（"+saved.docNo+"）。重複作成を防ぎました。");
+      } else {
+        alert("請求書を発行しました: " + saved.docNo + "\n取引先: " + customer + "\n品目数: " + String(allItems.length));
+        generateAndDownloadPDF(saved, co);
+      }
+    } catch(e) { alert((e._duplicate ? "⚠️ " : "エラー: ") + e.message); }
   };
 
   const convertDoc = async (fromDoc, toType) => {
-    const items = (fromDoc.items||[]).map(it=>({...it, date:it.date||fromDoc.date}));
-    const doc = { ...fromDoc, docType:toType, docNo:newDocNo(toType), id:undefined, items };
-    const saved = await db.saveDocument(doc, user||{id:"convert",email:"system"});
-    setHistory(h=>[saved,...h]);
-    setSel(null);
-    alert(toType+"に変換しました: " + saved.docNo);
+    try {
+      const items = (fromDoc.items||[]).map(it=>({...it, date:it.date||fromDoc.date}));
+      const doc = { ...fromDoc, docType:toType, docNo:newDocNo(toType), id:undefined, items };
+      const saved = await db.saveDocument(doc, user||{id:"convert",email:"system"});
+      setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
+      setSel(null);
+      alert(saved._duplicate
+        ? "⚠️ 同じ内容の"+toType+"が既にあります（"+saved.docNo+"）。重複作成を防ぎました。"
+        : toType+"に変換しました: " + saved.docNo);
+    } catch(e) { alert((e._duplicate ? "⚠️ " : "エラー: ") + e.message); }
   };
 
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>

@@ -16,6 +16,17 @@ function normalizeDoc(row) {
   };
 }
 
+// 重複書類の判定用シグネチャ（種別・取引先・日付・金額・品目を正規化して連結）
+// 単位/単価の表記ゆれ（"kg"↔空白 等）に影響されないよう、品目は「品名＋数量＋金額」で比較する。
+function docSignature(doc) {
+  const items = (doc.items || [])
+    .map(it => [String(it.name || "").trim(), Number(it.qty || 0), Number(it.amount || 0)].join("~"))
+    .filter(s => s !== "~0~0")
+    .sort()
+    .join("||");
+  return [doc.docType || "", String(doc.customer || "").trim(), doc.date || "", Number(doc.amount || 0), String(doc.description || "").trim(), items].join("##");
+}
+
 export const db = {
   // ── Documents ──────────────────────────────────────────────
   async getDocuments() {
@@ -23,7 +34,23 @@ export const db = {
     if (error) throw error;
     return (data || []).map(normalizeDoc);
   },
-  async saveDocument(doc, user) {
+  async saveDocument(doc, user, opts = {}) {
+    // ── 重複作成の防止 ──────────────────────────────────────────
+    // 同じ種別・取引先・日付・品目の書類が直近10分以内にあれば、新規作成せず既存を返す。
+    // （連打・同じメッセージの再送・AI再生成による重複を防ぐ。opts.allowDuplicate=true で無効化可）
+    if (!opts.allowDuplicate && doc.customer) {
+      const sinceIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      let q = supabase.from("documents").select("*")
+        .eq("doc_type", doc.docType)
+        .eq("customer", doc.customer)
+        .gte("created_at", sinceIso);
+      q = doc.date ? q.eq("date", doc.date) : q.is("date", null);
+      const { data: recent } = await q;
+      const sig = docSignature(doc);
+      const existing = (recent || []).map(normalizeDoc).find(d => docSignature(d) === sig);
+      if (existing) { existing._duplicate = true; return existing; }
+    }
+
     const { data, error } = await supabase.from("documents").insert([{
       doc_type: doc.docType, doc_no: doc.docNo, date: doc.date || null,
       customer: doc.customer, subject: doc.subject || null, due_date: doc.dueDate || null,
@@ -35,7 +62,15 @@ export const db = {
       created_by_name: user.user_metadata?.full_name || user.email,
       created_by_email: user.email,
     }]).select().single();
-    if (error) throw error;
+    if (error) {
+      // DB側トリガー（10分以内の同一内容）に弾かれた場合は分かりやすいエラーに変換
+      if (error.code === "23505") {
+        const dupErr = new Error("同じ内容の書類が直近に作成済みのため、重複作成を中止しました。");
+        dupErr._duplicate = true;
+        throw dupErr;
+      }
+      throw error;
+    }
     return normalizeDoc(data);
   },
   async updateDocument(id, doc) {
