@@ -129,14 +129,14 @@ export const db = {
     if (error) throw error;
     return (data || []).map(function(r) {
       return { id: r.id, code: r.code, name: r.name, origin: r.origin, unit: r.unit,
-        price: r.price, purchasePrice: r.purchase_price,
+        price: r.price, purchasePrice: r.purchase_price, category: r.category,
         taxRate: r.tax_rate, caseQty: r.case_qty, qtyPerCase: r.qty_per_case,
         stock: r.stock, note: r.note };
     });
   },
   async saveProduct(p) {
     const payload = { code: p.code, name: p.name, origin: p.origin, unit: p.unit,
-      price: p.price, purchase_price: p.purchasePrice || null,
+      price: p.price, purchase_price: p.purchasePrice || null, category: p.category || null,
       tax_rate: p.taxRate, case_qty: p.caseQty, qty_per_case: p.qtyPerCase,
       stock: p.stock || 0, note: p.note };
     if (p.id) {
