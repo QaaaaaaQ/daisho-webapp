@@ -939,6 +939,9 @@ export default function App() {
         <button onClick={()=>supabase.auth.signOut()} style={{ width:"100%", padding:"7px", border:"0.5px solid rgba(255,255,255,0.15)", borderRadius:6, background:"transparent", color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:11, fontFamily:"inherit", whiteSpace:"nowrap" }}>
           {sideOpen?"ログアウト":"→"}
         </button>
+        {sideOpen&&<div title={"ビルド日時(UTC): " + __BUILD_TIME__} style={{ marginTop:6, textAlign:"center", color:"rgba(255,255,255,0.28)", fontSize:9, lineHeight:1.5, whiteSpace:"nowrap" }}>
+          {"v" + __APP_VERSION__ + " · " + __GIT_COMMIT__}<br/>{__BUILD_TIME__ + " UTC"}
+        </div>}
       </div>
     </aside>
     <main style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column", background:"#fff" }}>
