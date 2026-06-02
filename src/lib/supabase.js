@@ -184,10 +184,13 @@ export const db = {
 };
 
 // ── AI (Gemini Edge Function) ──────────────────────────────
-export async function aiParse(text, company, customers = [], products = []) {
+// input は文字列（単発）または会話履歴の配列 [{role,content},...]
+// 戻り値は対話型ラッパー { need_info:boolean, message:string, doc:object|null }
+export async function aiParse(input, company, customers = [], products = []) {
   const custNames = customers.map(c => c.name);
-  const prodInfo = products.map(p => ({ name: p.name, origin: p.origin, unit: p.unit, price: p.price }));
-  const { data, error } = await supabase.functions.invoke("ai", { body: { text, type: "parse", company, customers: custNames, products: prodInfo } });
+  const prodInfo = products.map(p => ({ name: p.name, origin: p.origin, unit: p.unit, price: p.price, taxRate: p.taxRate }));
+  const messages = Array.isArray(input) ? input : [{ role: "user", content: String(input) }];
+  const { data, error } = await supabase.functions.invoke("ai", { body: { messages, type: "parse", company, customers: custNames, products: prodInfo } });
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(data.error);
   return data;

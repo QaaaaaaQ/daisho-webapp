@@ -259,6 +259,7 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
   const [docStates, setDocStates] = useState({});
   const [editTarget, setEditTarget] = useState(null);
   const [showDirect, setShowDirect] = useState(false);
+  const [pendingParse, setPendingParse] = useState(null); // 書類作成の質問ループ中の会話履歴
   const bottomRef = useRef(null);
   const SUGG = ["5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書","4月分 TEN&A さざえ請求書","藤屋 まふぐ刺身6パック×6,600円 納品書"];
   useEffect(()=>{ bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [msgs, loading]);
@@ -268,8 +269,21 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
     setMsgs(m=>[...m, { id:tid(), role:"user", text:text.trim() }]);
     setInput(""); setLoading(true);
     try {
-      if (isDocReq(text)) {
-        const parsed = await aiParse(text, co);
+      if (pendingParse || isDocReq(text)) {
+        if (pendingParse && /^(キャンセル|中止|やめ|やめて|cancel)/i.test(text.trim())) {
+          setPendingParse(null);
+          setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:"書類作成を中止しました。最初からやり直せます。" }]);
+        } else {
+        const convo = [...(pendingParse || []), { role:"user", content:text.trim() }];
+        const res = await aiParse(convo, co, customers, products);
+        if (res && res.need_info) {
+          // 不足情報・品名候補などを質問（揃うまで作成しない）
+          const q = res.message || "もう少し情報が必要です。取引先・品名・数量・単価を教えてください。";
+          setPendingParse([...convo, { role:"assistant", content:q }]);
+          setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:q }]);
+        } else {
+        setPendingParse(null);
+        const parsed = res.doc || res;
         parsed.docNo = newDocNo(parsed.docType||"納品書");
         const msgId = tid();
         setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:true }}));
@@ -309,6 +323,8 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
           setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:false }}));
           const failText = saveErr._duplicate ? "⚠️ " + saveErr.message : (parsed.docType||"納品書")+"を作成しました（保存エラー: "+saveErr.message+"）";
           setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:failText} : msg));
+        }
+        }
         }
       } else {
         const lastPending = [...msgs].reverse().find(m=>m.pendingOrigin);
