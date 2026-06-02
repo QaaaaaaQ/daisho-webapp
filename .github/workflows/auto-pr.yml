@@ -1,0 +1,37 @@
+name: Auto PR to main
+
+# feature/** または fix/** ブランチを push したら、main へのPRを自動作成する。
+# （既にOPENなPRがあれば作らない。差分が無い場合は何もしない）
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create PR if not exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BR="${GITHUB_REF_NAME}"
+          # 既にOPENのPRがあるか確認
+          if gh pr view "$BR" --json state -q .state 2>/dev/null | grep -q OPEN; then
+            echo "既にOPENのPRがあります: $BR"
+            exit 0
+          fi
+          # コミットメッセージからタイトル/本文を自動補完してPR作成
+          if gh pr create --base main --head "$BR" --fill; then
+            echo "PRを自動作成しました: $BR -> main"
+          else
+            echo "PRを作成できませんでした（差分なし、または権限不足の可能性）。"
+          fi

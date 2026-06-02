@@ -472,6 +472,18 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
     } catch(e) { alert((e._duplicate ? "⚠️ " : "エラー: ") + e.message); }
   };
 
+  // 同じ書類を当日日付でコピー作成（明示操作なので重複チェックはスキップ）
+  const copyDoc = async (src) => {
+    try {
+      const items = (src.items||[]).map(it=>({...it, date:tod()}));
+      const doc = { ...src, id:undefined, docNo:newDocNo(src.docType), date:tod(), items };
+      const saved = await db.saveDocument(doc, user||{id:"copy",email:"system"}, { allowDuplicate:true });
+      setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
+      setSel(null);
+      alert("コピーを作成しました: " + saved.docNo + "（" + src.docType + "・日付 " + tod() + "）");
+    } catch(e) { alert(e._duplicate ? "⚠️ 同じ内容の書類が本日分で既にあります。" : "エラー: " + e.message); }
+  };
+
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
     <div style={{ padding:"10px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
       <input style={{ ...INP, flex:1, minWidth:120 }} placeholder="取引先・書類番号で検索..." value={q} onChange={e=>setQ(e.target.value)}/>
@@ -542,6 +554,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
       <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
         {(sel.docType==="見積書"||sel.docType==="納品書")&&<Btn variant="blue" onClick={()=>convertDoc(sel,"請求書")}>📄 請求書に変換</Btn>}
         {sel.docType==="見積書"&&<Btn variant="ghost" onClick={()=>convertDoc(sel,"納品書")}>📋 納品書に変換</Btn>}
+        <Btn variant="green" onClick={()=>copyDoc(sel)}>📋 コピー作成（当日）</Btn>
         <Btn variant="red" onClick={async()=>{
           if (!confirm("削除しますか？\n※納品書・請求書の場合、在庫も自動で戻ります")) return;
           try {
