@@ -4,7 +4,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")!;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`;
+// モデル名は環境変数 GEMINI_MODEL で上書き可能（Googleのモデル廃止に備える）。
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
 const YR = new Date().getFullYear();
 
 const cors = {
