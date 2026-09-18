@@ -1,20 +1,39 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs, receiveStock, mergeDuplicateProducts } from "./lib/supabase";
 import { generateAndDownloadPDF, calcTax } from "./lib/pdf";
+import { downloadDocumentsCSV } from "./lib/csv";
+import { draftItem, localDate, validItems, validateDocument, documentTotal } from "./lib/domain";
 
-const tod = () => new Date().toISOString().slice(0, 10);
+const tod = () => localDate();
 const fm = (n) => Number(n || 0).toLocaleString("ja-JP");
 const fd = (d) => { if (!d) return ""; try { const t = new Date(d); return isNaN(t) ? String(d) : `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`; } catch { return String(d); } };
+const totalFor = (doc) => documentTotal(doc, calcTax(validItems(doc?.items)).total);
+const receiptDetailTotal = (doc) => calcTax(validItems(doc?.items)).total;
+const receiptAmountMismatch = (doc) => doc?.docType === "領収書" && validItems(doc?.items).length > 0 && Number(doc?.amount || 0) > 0 && Math.abs(Number(doc.amount) - receiptDetailTotal(doc)) > 0.01;
+const normalizeReceiptForSave = (doc) => {
+  if (doc?.docType !== "領収書") return doc;
+  const items = validItems(doc.items);
+  return {
+    ...doc,
+    items,
+    amount: Number(doc.amount || 0) > 0 ? Number(doc.amount) : calcTax(items).total,
+    description: doc.description || doc.subject || "商品代として",
+  };
+};
+const confirmReceiptAmount = (doc) => {
+  if (!receiptAmountMismatch(doc)) return true;
+  const detailTotal = receiptDetailTotal(doc);
+  return window.confirm(`領収金額 ¥${fm(doc.amount)} と明細合計 ¥${fm(detailTotal)} が一致しません。\n手入力の領収金額を正とし、PDFでは不一致の明細を表示しません。\nこの金額で保存しますか？`);
+};
 const tid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
-const newDocNo = (t) => (t==="請求書"?"INV":t==="領収書"?"REC":t==="見積書"?"EST":"DEL") + "-" + String(Date.now()).slice(-10);
 const DOC_KW = ["納品書","請求書","領収書","見積書"];
 const isDocReq = (t) => {
   if (!DOC_KW.some(k => t.includes(k))) return false;
   if (t.includes("見積書") || t.includes("見積り") || t.includes("見積もり")) return true;
-  return !!(t.match(/[×x＊]/) || t.match(/\d+円/) || t.match(/\d+kg/i) ||
+  return !!(t.match(/作成|お願い|発行|作る|欲しい|ください/) || t.match(/[×x＊*]/) || t.match(/\d+円/) || t.match(/\d+kg/i) ||
     t.match(/[1-9]\d*\s*[枚本個パック袋箱ケース]/) || t.match(/\d+,\d+/) || t.length > 80);
 };
-const DEFAULT_CO = { name:"株式会社 神戸大商", manager:"経理担当　秦", addr:"〒532-0011 大阪市淀川区西中島４丁目７番１８号", tel:"TEL:06-6379-3451", fax:"FAX:06-6379-3461", regNo:"T4120001218286", bankA:"りそな銀行　新大阪駅前支店　普通0436583", bankB:"三井住友銀行　神戸営業部　普通預金1663502" };
+const DEFAULT_CO = { name:"株式会社 神戸大商", manager:"経理担当　秦", addr:"〒532-0011 大阪市淀川区西中島４丁目７番１８号", tel:"TEL:06-6379-3451", fax:"FAX:06-6379-3461", regNo:"T4120001218286", bankA:"りそな銀行　新大阪駅前支店　普通0436583", bankB:"三井住友銀行　神戸営業部　普通預金1663502", adminEmails:"shin@kobedaisho.com" };
 const N = "#1a2744";
 const INP = { width:"100%", padding:"7px 9px", border:"1px solid #d1d5db", borderRadius:6, fontSize:13, fontFamily:"inherit", background:"#fff", color:"#111", outline:"none" };
 const SEL = { ...INP };
@@ -38,7 +57,7 @@ function Modal({ title, onClose, children, maxW=560, tall }) {
   </div>;
 }
 
-function ItemsEditor({ items, products, onChange }) {
+function ItemsEditor({ items, products, onChange, docType="納品書" }) {
   const upd = (i, k, v) => {
     onChange(items.map((it, j) => {
       if (j !== i) return it;
@@ -47,10 +66,10 @@ function ItemsEditor({ items, products, onChange }) {
       return u;
     }));
   };
-  const addItem = () => onChange([...items, { date:tod(), origin:"", name:"", qty:"", unit:"", price:"", amount:0, taxRate:8, taxIncluded:false, caseCount:"", qtyPerCase:"" }]);
+  const addItem = () => onChange([...items, draftItem(tod(), docType)]);
   const remItem = (i) => onChange(items.filter((_,j)=>j!==i));
   const fill = (i, p) => {
-    const u = { ...items[i], name:p.name, unit:p.unit, price:p.price, origin:p.origin||"", taxRate:p.taxRate||8 };
+    const u = { ...items[i], name:p.name, unit:p.unit, price:p.price, origin:p.origin||"", taxRate:p.taxRate||8, taxIncluded: docType === "領収書" ? true : Boolean(items[i].taxIncluded) };
     u.amount = Number(u.qty||0) * Number(u.price||0);
     onChange(items.map((it,j)=>j===i?u:it));
   };
@@ -76,7 +95,7 @@ function ItemsEditor({ items, products, onChange }) {
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:60, fontSize:11, padding:"4px 5px" }} type="number" value={it.qty||""} onChange={e=>upd(i,"qty",e.target.value)}/></td>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:55, fontSize:11, padding:"4px 5px" }} value={it.unit||""} onChange={e=>upd(i,"unit",e.target.value)}/></td>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:72, fontSize:11, padding:"4px 5px" }} type="number" value={it.price||""} onChange={e=>upd(i,"price",e.target.value)}/></td>
-            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:78, fontSize:11, padding:"4px 5px" }} type="number" value={it.amount||""} onChange={e=>upd(i,"amount",e.target.value)}/></td>
+            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:78, fontSize:11, padding:"4px 5px", background:"#f3f4f6" }} type="number" value={it.amount||""} readOnly title="数量×単価から自動計算"/></td>
             <td style={{ padding:"3px 4px" }}>
               <select style={{ ...SEL, width:62, fontSize:11, padding:"4px 5px" }} value={it.taxRate||8} onChange={e=>upd(i,"taxRate",Number(e.target.value))}>
                 <option value={8}>8%</option><option value={10}>10%</option>
@@ -103,9 +122,13 @@ function ItemsEditor({ items, products, onChange }) {
 }
 
 function DirectDocForm({ co, products, customers, history, setHistory, setProducts, setCustomers, user, onClose }) {
-  const empty = { date:tod(), origin:"", name:"", qty:"", unit:"", price:"", amount:0, taxRate:8, taxIncluded:false, caseCount:"", qtyPerCase:"" };
+  const empty = draftItem(tod(), "納品書");
   const [f, setF] = useState({ docType:"納品書", date:tod(), customer:"", subject:"", dueDate:"", expiryDate:"", conditions:"", bank:co.bankA||"", note:"", amount:"", description:"商品代として", items:[empty] });
   const [saving, setSaving] = useState(false);
+  const receiptPreviewItems = validItems(f.items);
+  const receiptItemsTotal = calcTax(receiptPreviewItems).total;
+  const receiptPreviewAmount = Number(f.amount||0) > 0 ? Number(f.amount) : receiptItemsTotal;
+  const receiptAmountIsMismatched = receiptPreviewItems.length > 0 && Number(f.amount||0) > 0 && Math.abs(Number(f.amount) - receiptItemsTotal) > 0.01;
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
   const fillCust = (name) => {
     const c = customers.find(x=>x.name===name);
@@ -114,9 +137,14 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
   };
   const handleSave = async (print) => {
     if (!f.customer) { alert("取引先を選択してください"); return; }
+    const receiptItems = validItems(f.items);
+    const validationError = validateDocument({ ...f, items: receiptItems });
+    if (validationError) { alert(validationError); return; }
+    const normalizedDoc = normalizeReceiptForSave({ ...f, items: receiptItems });
+    if (!confirmReceiptAmount(normalizedDoc)) return;
     setSaving(true);
     try {
-      const doc = { ...f, docNo: newDocNo(f.docType) };
+      const doc = f.docType === "領収書" ? normalizedDoc : { ...f, items: f.items };
       const saved = await db.saveDocument(doc, user);
       if (saved._duplicate) {
         // 重複検知: 出庫処理はスキップ（在庫の二重減算防止）。PDFは既存書類で生成可
@@ -126,7 +154,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
         onClose(); setSaving(false); return;
       }
       setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
-      const result = await autoRegisterAndStock({...doc, id:saved.id}, user);
+      const result = await autoRegisterAndStock({...saved}, user);
       if (result.newCustomer || result.newProducts.length > 0) {
         const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
         setProducts(prods); setCustomers(custs);
@@ -146,7 +174,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
   return <Modal title={`📝 ${f.docType}を直接作成`} onClose={onClose} maxW={900} tall>
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
       <Field label="書類種別">
-        <select style={SEL} value={f.docType} onChange={e=>upd("docType",e.target.value)}>
+        <select style={SEL} value={f.docType} onChange={e=>{ const type=e.target.value; setF(x=>({...x,docType:type,items:(x.items||[]).map(it=>({...it,taxIncluded:type==="領収書"?true:Boolean(it.taxIncluded)}))})); }}>
           <option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option>
         </select>
       </Field>
@@ -167,20 +195,22 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
       <div style={{ fontWeight:500, fontSize:13, marginBottom:10, color:"#7c3aed" }}>🧾 領収書の金額・内容</div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
         <Field label="領収金額（税込・円）*">
-          <input style={{ ...INP, fontSize:15, fontWeight:500 }} type="number" value={f.amount||""} onChange={e=>upd("amount",e.target.value)} placeholder="例: 50000"/>
+          <input style={{ ...INP, fontSize:15, fontWeight:500 }} type="number" value={f.amount||""} onChange={e=>upd("amount",e.target.value)} placeholder={receiptPreviewItems.length > 0 ? "空欄なら明細合計" : "例: 50000"}/>
         </Field>
         <Field label="但し書き">
           <input style={INP} value={f.description||"商品代として"} onChange={e=>upd("description",e.target.value)} placeholder="商品代として"/>
         </Field>
       </div>
-      {f.amount&&<div style={{ textAlign:"right", fontSize:14, color:"#7c3aed", fontWeight:500 }}>
-        {"領収金額: ¥" + Number(f.amount).toLocaleString("ja-JP") + " -"}
+      {f.docType==="領収書"&&receiptPreviewAmount>0&&<div style={{ textAlign:"right", fontSize:14, color:"#7c3aed", fontWeight:500 }}>
+        {"領収金額: ¥" + receiptPreviewAmount.toLocaleString("ja-JP") + " -"}
       </div>}
+      {f.docType==="領収書"&&receiptPreviewItems.length>0&&<div style={{ fontSize:11, color:"#7c3aed", marginTop:4 }}>手入力した領収金額を優先します。金額を空欄にした場合のみ、明細合計（税込）を使用します（現在の明細合計: ¥{receiptItemsTotal.toLocaleString("ja-JP")}）。</div>}
+      {f.docType==="領収書"&&receiptAmountIsMismatched&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginTop:6 }}>⚠️ 手入力金額と明細合計が不一致です。保存時に手入力金額を正とする確認を表示し、PDFでは明細を非表示にします。</div>}
     </div>}
-    {f.docType!=="領収書"&&<>
-    <div style={{ fontWeight:500, fontSize:13, marginBottom:8, color:"#374151" }}>品目</div>
-    <ItemsEditor items={f.items} products={products} onChange={items=>upd("items",items)}/>
-    </>}
+    <>
+    <div style={{ fontWeight:500, fontSize:13, marginBottom:8, color:"#374151" }}>{f.docType==="領収書"?"内容明細":"品目"}</div>
+    <ItemsEditor items={f.items} products={products} docType={f.docType} onChange={items=>upd("items",items)}/>
+    </>
     <Field label="備考"><input style={{ ...INP, marginTop:10 }} value={f.note} onChange={e=>upd("note",e.target.value)} placeholder="任意"/></Field>
     <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"flex-end" }}>
       <Btn onClick={onClose}>キャンセル</Btn>
@@ -192,7 +222,14 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
 
 function DocEditModal({ doc, onClose, onSave, co, products }) {
   const [d, setD] = useState({ ...doc });
+  const editReceiptItems = validItems(d.items);
+  const editReceiptItemsTotal = calcTax(editReceiptItems).total;
+  const editReceiptAmountIsMismatched = editReceiptItems.length > 0 && Number(d.amount||0) > 0 && Math.abs(Number(d.amount) - editReceiptItemsTotal) > 0.01;
   const upd = (k,v) => setD(x=>({...x,[k]:v}));
+  const submit = () => {
+    if (!confirmReceiptAmount(d)) return;
+    onSave(d);
+  };
   return <Modal title={`${d.docType} 編集`} onClose={onClose} maxW={900} tall>
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
       <Field label="書類種別"><select style={SEL} value={d.docType} onChange={e=>upd("docType",e.target.value)}><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option></select></Field>
@@ -204,24 +241,28 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
       {d.docType==="見積書"&&<Field label="有効期限"><input style={INP} type="date" value={d.expiryDate||""} onChange={e=>upd("expiryDate",e.target.value)}/></Field>}
       {d.docType==="見積書"&&<Field label="取引条件"><input style={INP} value={d.conditions||""} onChange={e=>upd("conditions",e.target.value)}/></Field>}
     </div>
-    {d.docType!=="領収書"&&<>
-      <div style={{ fontWeight:500, fontSize:13, marginBottom:8 }}>品目</div>
-      <ItemsEditor items={d.items||[]} products={products||[]} onChange={items=>upd("items",items)}/>
-    </>}
+    <>
+      <div style={{ fontWeight:500, fontSize:13, marginBottom:8 }}>{d.docType==="領収書"?"内容明細":"品目"}</div>
+      <ItemsEditor items={d.items||[]} products={products||[]} docType={d.docType} onChange={items=>upd("items",items)}/>
+    </>
     {d.docType==="領収書"&&<>
-      <Field label="金額（税込）"><input style={INP} type="number" value={d.amount||""} onChange={e=>upd("amount",e.target.value)}/></Field>
+      <Field label="金額（税込）"><input style={INP} type="number" value={d.amount||""} onChange={e=>upd("amount",e.target.value)} placeholder={editReceiptItems.length > 0 ? "空欄なら明細合計" : "例: 50000"}/></Field>
+      {editReceiptItems.length > 0&&<div style={{ fontSize:11, color:"#7c3aed", marginTop:-6, marginBottom:8 }}>手入力金額を優先します。空欄の場合のみ明細合計（税込）¥{editReceiptItemsTotal.toLocaleString("ja-JP")}を使用します。</div>}
+      {editReceiptAmountIsMismatched&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginBottom:8 }}>⚠️ 手入力金額と明細合計が不一致です。保存時に手入力金額を正とする確認を表示し、PDFでは明細を非表示にします。</div>}
       <Field label="但し書き"><input style={INP} value={d.description||"商品代として"} onChange={e=>upd("description",e.target.value)}/></Field>
     </>}
     <Field label="備考"><input style={{ ...INP, marginTop:8 }} value={d.note||""} onChange={e=>upd("note",e.target.value)}/></Field>
     <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"flex-end" }}>
       <Btn onClick={onClose}>キャンセル</Btn>
-      <Btn variant="primary" onClick={()=>onSave(d)}>✅ 保存</Btn>
+      <Btn variant="primary" onClick={submit}>✅ 保存</Btn>
     </div>
   </Modal>;
 }
 
 function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
   const tx = calcTax(doc.items||[]);
+  const docTotal = totalFor(doc);
+  const hasReceiptDetails = validItems(doc.items).length > 0;
   const tc = doc.docType==="請求書"?"#1d4ed8":doc.docType==="領収書"?"#7c3aed":doc.docType==="見積書"?"#d97706":"#047857";
   return <div style={{ background:"#fff", border:"1.5px solid #e5e7eb", borderRadius:10, overflow:"hidden", marginTop:8, maxWidth:420, boxShadow:"0 2px 8px rgba(0,0,0,0.07)" }}>
     <div style={{ background:N, padding:"9px 13px", display:"flex", alignItems:"center", gap:10 }}>
@@ -236,10 +277,11 @@ function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
         <span style={{ fontWeight:500 }}>{fm(it.amount) + "円"}</span>
       </div>)}
       {(doc.items||[]).length>3&&<div style={{ fontSize:11, color:"#9ca3af", padding:"2px 0" }}>{"...他 " + (doc.items.length-3) + "品目"}</div>}
+      {doc.docType==="領収書"&&receiptAmountMismatch(doc)&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", borderRadius:5, padding:"4px 6px", marginTop:5 }}>⚠️ 手入力金額を優先（明細は参考）</div>}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:7, paddingTop:7, borderTop:"1px solid #f3f4f6" }}>
         <div>
-          <div style={{ fontSize:11, color:"#6b7280" }}>{"小計 " + fm(tx.sub) + "円 / 消費税 " + fm(tx.tax) + "円"}</div>
-          <div style={{ fontSize:15, fontWeight:600, marginTop:2 }}>{"合計 " + fm(tx.total) + "円"}</div>
+          <div style={{ fontSize:11, color:"#6b7280" }}>{doc.docType==="領収書"&&!hasReceiptDetails ? "領収金額" : "小計 " + fm(tx.sub) + "円 / 消費税 " + fm(tx.tax) + "円"}</div>
+          <div style={{ fontSize:15, fontWeight:600, marginTop:2 }}>{"合計 " + fm(docTotal) + "円"}</div>
         </div>
         <div style={{ display:"flex", gap:5, flexWrap:"wrap", justifyContent:"flex-end" }}>
           <Btn small onClick={onEdit}>✏️ 編集</Btn>
@@ -250,6 +292,42 @@ function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
       </div>
     </div>
   </div>;
+}
+
+function ParseReviewCard({ result }) {
+  const doc = result?.doc || {};
+  const items = Array.isArray(doc.items) ? doc.items : [];
+  const missing = Array.isArray(result?.missing) ? result.missing : [];
+  const unrecognized = Array.isArray(result?.unrecognized) ? result.unrecognized : [];
+  const recognized = [
+    doc.docType && `書類: ${doc.docType}`,
+    doc.date && `日付: ${doc.date}`,
+    doc.customer && `取引先: ${doc.customer}`,
+  ].filter(Boolean);
+  return <div style={{ background:"#fff", border:"1px solid #dbeafe", borderRadius:9, padding:"9px 12px", marginTop:8, maxWidth:460, fontSize:12 }}>
+    <div style={{ color:"#1d4ed8", fontWeight:600, marginBottom:6 }}>認識できた内容（未保存の下書き）</div>
+    {result?.requestId&&<div style={{ color:"#9ca3af", fontSize:10, marginBottom:5 }}>AIログID: {result.requestId}</div>}
+    {recognized.length>0&&<div style={{ color:"#374151", marginBottom:5 }}>{recognized.join(" / ")}</div>}
+    {items.length>0&&<div style={{ borderTop:"1px solid #eff6ff", paddingTop:5 }}>
+      {items.map((it,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", gap:8, padding:"2px 0" }}>
+        <span>{it.name || "品名未認識"}{it.origin ? `（${it.origin}）` : ""} × {it.qty ?? "数量未認識"}{it.unit || ""}</span>
+        <span>{it.price != null ? `単価 ${fm(it.price)}円` : "単価未認識"}</span>
+      </div>)}
+    </div>}
+    {recognized.length===0&&items.length===0&&<div style={{ color:"#6b7280", marginBottom:5 }}>認識できた項目はありません。</div>}
+    {missing.length>0&&<div style={{ color:"#b45309", marginTop:7 }}>不足: {missing.join("、")}</div>}
+    {unrecognized.length>0&&<div style={{ color:"#b91c1c", marginTop:5 }}>
+      <div>未認識・要確認:</div>
+      {unrecognized.map((x,i)=><div key={i} style={{ paddingLeft:8, marginTop:2 }}>・{x.field || "項目"}{x.raw ? `「${String(x.raw).slice(0,80)}」` : ""}{x.reason ? ` — ${x.reason}` : ""}</div>)}
+    </div>}
+  </div>;
+}
+
+function parseReviewContext(result, question) {
+  const parts = [question];
+  if (result?.missing?.length) parts.push(`不足: ${result.missing.join("、")}`);
+  if (result?.unrecognized?.length) parts.push(`未認識: ${result.unrecognized.map(x=>x.raw || x.field || "項目").join("、")}`);
+  return parts.join("\n");
 }
 
 function ChatView({ co, products, customers, history, setHistory, setProducts, setCustomers, user }) {
@@ -279,24 +357,32 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
         if (res && res.need_info) {
           // 不足情報・品名候補などを質問（揃うまで作成しない）
           const q = res.message || "もう少し情報が必要です。取引先・品名・数量・単価を教えてください。";
-          setPendingParse([...convo, { role:"assistant", content:q }]);
-          setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:q }]);
+          const review = parseReviewContext(res, q);
+          setPendingParse([...convo, { role:"assistant", content:review }]);
+          setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:q, parseResult:res }]);
         } else {
         setPendingParse(null);
         const parsed = res.doc || res;
-        parsed.docNo = newDocNo(parsed.docType||"納品書");
+        const parsedValidation = validateDocument(parsed);
+        if (parsedValidation) {
+          setPendingParse([...convo, { role:"assistant", content:parsedValidation }]);
+          setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:parsedValidation }]);
+          setLoading(false);
+          return;
+        }
+        const prepared = normalizeReceiptForSave(parsed);
         const msgId = tid();
-        setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:true }}));
-        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:(parsed.docType||"納品書")+"を作成しました。自動保存中...", doc:parsed }]);
+        setDocStates(s=>({...s,[msgId]:{ doc:prepared, saved:false, saving:true }}));
+        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:(prepared.docType||"納品書")+"を作成しました。自動保存中...", doc:prepared }]);
         try {
-          const saved = await db.saveDocument(parsed, user);
+          const saved = await db.saveDocument(prepared, user);
           if (saved._duplicate) {
             // 重複検知: 出庫処理(autoRegisterAndStock)はスキップし在庫の二重減算を防ぐ。既存書類を表示
             setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
             setDocStates(s=>({...s,[msgId]:{ doc:saved, saved:true, saving:false }}));
             setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:"⚠️ 同じ内容の"+(saved.docType||"書類")+"が既に作成済みです（"+saved.docNo+"）。重複作成を防ぎました。", doc:saved} : msg));
           } else {
-          const result = await autoRegisterAndStock({...parsed, id:saved.id}, user);
+          const result = await autoRegisterAndStock({...saved}, user);
           if (result.newCustomer || result.newProducts.length > 0) {
             const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
             setProducts(prods); setCustomers(custs);
@@ -320,8 +406,8 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
           }
           }
         } catch(saveErr) {
-          setDocStates(s=>({...s,[msgId]:{ doc:parsed, saved:false, saving:false }}));
-          const failText = saveErr._duplicate ? "⚠️ " + saveErr.message : (parsed.docType||"納品書")+"を作成しました（保存エラー: "+saveErr.message+"）";
+          setDocStates(s=>({...s,[msgId]:{ doc:prepared, saved:false, saving:false }}));
+          const failText = saveErr._duplicate ? "⚠️ " + saveErr.message : (prepared.docType||"納品書")+"を作成しました（保存エラー: "+saveErr.message+"）";
           setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:failText} : msg));
         }
         }
@@ -365,10 +451,20 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
     setLoading(false);
   };
 
-  const handleEditSave = (newDoc) => {
-    setDocStates(s=>({...s,[editTarget.msgId]:{ ...s[editTarget.msgId], doc:newDoc, saved:false }}));
-    setMsgs(m=>m.map(msg=>msg.id===editTarget.msgId?{...msg,doc:newDoc}:msg));
-    setEditTarget(null);
+  const handleEditSave = async (newDoc) => {
+    const prepared = normalizeReceiptForSave(newDoc);
+    const validationError = validateDocument(prepared);
+    if (validationError) { alert(validationError); return; }
+    try {
+      const saved = prepared.id ? await db.updateDocument(prepared.id, prepared) : prepared;
+      if (saved.id) {
+        setHistory(h=>h.map(x=>x.id===saved.id?saved:x));
+        setProducts(await db.getProducts());
+      }
+      setDocStates(s=>({...s,[editTarget.msgId]:{ ...s[editTarget.msgId], doc:saved, saved:Boolean(saved.id), saving:false }}));
+      setMsgs(m=>m.map(msg=>msg.id===editTarget.msgId?{...msg,doc:saved,text:(saved.docType||"書類")+"を更新しました ✓"}:msg));
+      setEditTarget(null);
+    } catch (e) { alert("編集保存エラー: " + e.message); }
   };
 
   return <div style={{ display:"flex", flexDirection:"column", height:"100%" }}>
@@ -388,6 +484,7 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
             onPrint={()=>generateAndDownloadPDF(curDoc,co)}
             saved={ds?.saved||false} saving={ds?.saving||false}
           />}
+          {msg.parseResult&&<ParseReviewCard result={msg.parseResult}/>}
         </div>;
       })}
       {loading&&<div style={{ display:"flex" }}><div style={{ background:"#f3f4f6", borderRadius:"12px 12px 12px 3px", padding:"9px 13px" }}><span style={{ display:"inline-flex", gap:4 }}>{[0,1,2].map(i=><span key={i} style={{ width:5, height:5, borderRadius:"50%", background:"#9ca3af", display:"inline-block", animation:"blink 1.2s infinite", animationDelay:`${i*0.2}s` }}/>)}</span></div></div>}
@@ -424,6 +521,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
   const [batchModal, setBatchModal] = useState(false);
   const [batchDueDate, setBatchDueDate] = useState("");
   const [batchBank, setBatchBank] = useState(co.bankA||"");
+  const [bulkDownloading, setBulkDownloading] = useState(false);
 
   const filt = (history||[]).filter(h=>
     (typeFilter==="全て"||h.docType===typeFilter)&&
@@ -431,21 +529,37 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
   );
   const tc = (t) => t==="請求書"?"#1d4ed8":t==="領収書"?"#7c3aed":t==="見積書"?"#d97706":"#047857";
   const totalToday = (history||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
-  const checkedList = filt.filter(h=>checked[h.id]);
+  const checkedList = filt.filter(h=>checked[h.id] && h.docType==="納品書");
+  const bulkDocs = (history||[]).filter(h=>h.docType==="請求書"||h.docType==="領収書");
   const checkedCustomers = [...new Set(checkedList.map(h=>h.customer))];
   const toggleCheck = (id, e) => { e.stopPropagation(); setChecked(c=>({...c,[id]:!c[id]})); };
   const clearCheck = () => setChecked({});
 
+  const downloadAllBillingDetails = async () => {
+    if (bulkDocs.length===0 || bulkDownloading) return;
+    setBulkDownloading(true);
+    try {
+      downloadDocumentsCSV(bulkDocs);
+    } catch(e) {
+      alert("明細CSV生成エラー: " + e.message);
+    } finally {
+      setBulkDownloading(false);
+    }
+  };
+
   const batchToInvoice = async () => {
     if (checkedList.length===0) return;
+    if (checkedList.some(d=>d.docType!=="納品書")) { alert("納品書だけを選択してください"); return; }
     if (checkedCustomers.length>1) { alert("同じ取引先の納品書のみ選択してください"); return; }
     const customer = checkedCustomers[0];
     const allItems = checkedList
       .sort((a,b)=>a.date>b.date?1:-1)
       .flatMap(dn=>(dn.items||[]).map(it=>({...it, date:it.date||dn.date})));
-    const inv = { docType:"請求書", docNo:newDocNo("請求書"), date:tod(), customer,
+    const inv = { docType:"請求書", date:tod(), customer,
       subject:checkedList.map(d=>d.subject).filter(Boolean).join("・")||"",
       dueDate:batchDueDate, bank:batchBank, items:allItems };
+    const validationError = validateDocument(inv);
+    if (validationError) { alert(validationError); return; }
     try {
       const saved = await db.saveDocument(inv, user||{id:"batch",email:"batch"});
       setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
@@ -462,9 +576,13 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
   const convertDoc = async (fromDoc, toType) => {
     try {
       const items = (fromDoc.items||[]).map(it=>({...it, date:it.date||fromDoc.date}));
-      const doc = { ...fromDoc, docType:toType, docNo:newDocNo(toType), id:undefined, items };
-      const saved = await db.saveDocument(doc, user||{id:"convert",email:"system"});
+      const doc = { ...fromDoc, docType:toType, docNo:undefined, id:undefined, items };
+      const saved = await db.saveDocument(doc, user);
       setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
+      if (!saved._duplicate && fromDoc.docType === "見積書" && (toType === "納品書" || toType === "請求書")) {
+        await autoRegisterAndStock({ ...saved }, user);
+        setProducts(await db.getProducts());
+      }
       setSel(null);
       alert(saved._duplicate
         ? "⚠️ 同じ内容の"+toType+"が既にあります（"+saved.docNo+"）。重複作成を防ぎました。"
@@ -476,7 +594,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
   const copyDoc = async (src) => {
     try {
       const items = (src.items||[]).map(it=>({...it, date:tod()}));
-      const doc = { ...src, id:undefined, docNo:newDocNo(src.docType), date:tod(), items };
+      const doc = { ...src, id:undefined, docNo:undefined, date:tod(), items };
       const saved = await db.saveDocument(doc, user||{id:"copy",email:"system"}, { allowDuplicate:true });
       setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
       setSel(null);
@@ -497,6 +615,9 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
         {"📄 請求書まとめ発行（" + checkedList.length + "件）"}
       </Btn>}
       {batchMode&&checkedList.length>0&&<Btn small variant="red" onClick={clearCheck}>クリア</Btn>}
+      <Btn small variant="green" onClick={downloadAllBillingDetails} disabled={bulkDocs.length===0||bulkDownloading}>
+        {bulkDownloading?"⏳ CSV作成中...":"📥 請求書・領収書の明細CSV（"+bulkDocs.length+"件）"}
+      </Btn>
       <span style={{ fontSize:11, color:"#9ca3af", whiteSpace:"nowrap" }}>{filt.length + "件 / 本日" + totalToday + "件"}</span>
     </div>
     {batchMode&&checkedList.length>0&&<div style={{ padding:"8px 18px", background:"#eff6ff", borderBottom:"1px solid #bfdbfe", fontSize:12 }}>
@@ -512,14 +633,14 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
         const isChecked = !!checked[h.id];
         return <div key={h.id} onClick={()=>batchMode?null:setSel(h)}
           style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 18px", borderBottom:"1px solid #f9f9f9", cursor:batchMode?"default":"pointer", background:isChecked?"#eff6ff":sel?.id===h.id?"#f9fafb":"transparent" }}>
-          {batchMode&&<input type="checkbox" checked={isChecked} onChange={e=>toggleCheck(h.id,e)} style={{ width:16, height:16, cursor:"pointer", flexShrink:0 }}/>}
+          {batchMode&&<input type="checkbox" checked={isChecked} disabled={h.docType!=="納品書"} onChange={e=>toggleCheck(h.id,e)} style={{ width:16, height:16, cursor:h.docType==="納品書"?"pointer":"not-allowed", flexShrink:0 }}/>}
           <span style={{ background:tc(h.docType), color:"#fff", fontSize:11, padding:"2px 6px", borderRadius:3, whiteSpace:"nowrap" }}>{h.docType}</span>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontWeight:500, fontSize:13 }}>{h.customer}</div>
             <div style={{ fontSize:11, color:"#9ca3af" }}>{h.docNo + " • " + h.date + (h.subject?" • "+h.subject:"")}</div>
           </div>
           <div style={{ textAlign:"right", flexShrink:0 }}>
-            <div style={{ fontWeight:500, fontSize:13 }}>{fm(h.docType==="領収書"?h.amount:tx.total) + "円"}</div>
+            <div style={{ fontWeight:500, fontSize:13 }}>{fm(totalFor(h)) + "円"}</div>
             <div style={{ fontSize:11, color:"#9ca3af" }}>{h.savedBy}</div>
           </div>
         </div>;
@@ -547,10 +668,11 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
     </Modal>}
     {sel&&<Modal title={sel.docType + " - " + sel.customer} onClose={()=>setSel(null)}>
       {[["書類番号",sel.docNo],["日付",sel.date],["入金期日",sel.dueDate],["件名",sel.subject],["作成者",sel.savedBy]].map(([l,v])=>v?<div key={l} style={{ display:"flex", gap:8, padding:"5px 0", borderBottom:"1px solid #f3f4f6", fontSize:13 }}><span style={{ color:"#6b7280", minWidth:80 }}>{l}</span><span>{v}</span></div>:null)}
-      {(sel.items||[]).map((it,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0", borderBottom:"1px solid #f3f4f6" }}>
+      {validItems(sel.items).map((it,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0", borderBottom:"1px solid #f3f4f6" }}>
         <span>{(it.origin?it.origin+" ":"") + it.name + " × " + it.qty + it.unit}</span><span style={{ fontWeight:500 }}>{fm(it.amount) + "円"}</span>
       </div>)}
-      {(sel.items||[]).length>0&&(()=>{ const tx=calcTax(sel.items); return <div style={{ textAlign:"right", marginTop:8, fontSize:13 }}><div style={{ color:"#6b7280" }}>{"消費税: " + fm(tx.tax) + "円"}</div><div style={{ fontWeight:600, fontSize:15 }}>{"合計: " + fm(tx.total) + "円"}</div></div>; })()}
+      {receiptAmountMismatch(sel)&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginTop:8 }}>⚠️ 明細合計と領収金額が不一致です。領収金額 ¥{fm(sel.amount)} を正とし、明細は参考扱いです。</div>}
+      {(()=>{ const items=validItems(sel.items); const tx=calcTax(items); const total=totalFor(sel); return <div style={{ textAlign:"right", marginTop:8, fontSize:13 }}><div style={{ color:"#6b7280" }}>{items.length>0 ? "消費税: " + fm(tx.tax) + "円" : "領収金額"}</div><div style={{ fontWeight:600, fontSize:15 }}>{"合計: " + fm(total) + "円"}</div></div>; })()}
       <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
         {(sel.docType==="見積書"||sel.docType==="納品書")&&<Btn variant="blue" onClick={()=>convertDoc(sel,"請求書")}>📄 請求書に変換</Btn>}
         {sel.docType==="見積書"&&<Btn variant="ghost" onClick={()=>convertDoc(sel,"納品書")}>📋 納品書に変換</Btn>}
@@ -569,9 +691,16 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
       </div>
     </Modal>}
     {editTarget&&<DocEditModal doc={editTarget} co={co} products={products||[]} onClose={()=>setEditTarget(null)} onSave={async(nd)=>{
-      const updated = await db.updateDocument(editTarget.id, nd);
-      setHistory(h=>h.map(x=>x.id===editTarget.id?updated:x));
-      setEditTarget(null);
+      const receiptItems = validItems(nd.items);
+      const validationError = validateDocument({ ...nd, items: receiptItems });
+      if (validationError) { alert(validationError); return; }
+      const normalized = normalizeReceiptForSave({ ...nd, items:receiptItems });
+      try {
+        const updated = await db.updateDocument(editTarget.id, normalized);
+        setHistory(h=>h.map(x=>x.id===editTarget.id?updated:x));
+        setProducts(await db.getProducts());
+        setEditTarget(null);
+      } catch (e) { alert("編集保存エラー: " + e.message); }
     }}/>}
   </div>;
 }
@@ -585,6 +714,7 @@ function ProductsView({ products, setProducts, user }) {
   const [sortDir, setSortDir] = useState(1);
   const [catFilter, setCatFilter] = useState("全て");
   const [receiving, setReceiving] = useState({ qty:"", supplier:"", note:"" });
+  const [adjustQty, setAdjustQty] = useState("");
   const categories = [...new Set(products.map(p=>p.category).filter(Boolean))].sort();
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
   const updR = (k,v) => setReceiving(x=>({...x,[k]:v}));
@@ -595,7 +725,7 @@ function ProductsView({ products, setProducts, user }) {
     return String(av).localeCompare(String(bv),"ja")*sortDir;
   });
   const open = (p) => { setF(p||{ name:"", code:"", category:"", origin:"", unit:"kg", price:"", purchasePrice:"", taxRate:8, caseQty:"", qtyPerCase:"", stock:0, note:"" }); setM("edit"); };
-  const openLogs = async (p) => { setLogProduct(p); setLogs(await getStockLogs(p.id)); setM("logs"); };
+  const openLogs = async (p) => { try { setLogProduct(p); setLogs(await getStockLogs(p.id)); setM("logs"); } catch (e) { alert("在庫履歴の取得エラー: " + e.message); } };
   const save = async () => {
     if (!f.name) { alert("商品名は必須です"); return; }
     try { await db.saveProduct(f); setProducts(await db.getProducts()); setM(null); }
@@ -607,9 +737,12 @@ function ProductsView({ products, setProducts, user }) {
     catch(e) { alert("削除エラー: " + e.message); }
   };
   const doMerge = async () => {
-    const count = await mergeDuplicateProducts();
-    setProducts(await db.getProducts());
-    alert(count > 0 ? count + "件の重複商品をマージしました" : "重複はありませんでした");
+    try {
+      if (!confirm("同名・同単位の商品を統合します。元の商品は削除されます。続けますか？")) return;
+      const count = await mergeDuplicateProducts();
+      setProducts(await db.getProducts());
+      alert(count > 0 ? count + "件の重複商品をマージしました" : "重複はありませんでした");
+    } catch (e) { alert("重複マージエラー: " + e.message); }
   };
   const doReceive = async () => {
     if (!logProduct || !receiving.qty) { alert("数量を入力してください"); return; }
@@ -710,17 +843,18 @@ function ProductsView({ products, setProducts, user }) {
       <div style={{ marginTop:10 }}>
         <Field label="手動調整（±数量）">
           <div style={{ display:"flex", gap:8 }}>
-            <input id="adj-qty" type="number" placeholder="例: -5 または +10" style={{ ...INP, flex:1 }}/>
+            <input id="adj-qty" type="number" value={adjustQty} onChange={e=>setAdjustQty(e.target.value)} placeholder="例: -5 または +10" style={{ ...INP, flex:1 }}/>
             <Btn small variant="primary" onClick={async()=>{
-              const v = Number(document.getElementById("adj-qty").value);
-              if (!v) return;
-              await supabase.from("products").update({ stock: Number(logProduct.stock||0)+v }).eq("id", logProduct.id);
-              await supabase.from("stock_logs").insert([{ product_id:logProduct.id, change:v, reason:"手動調整", created_by:null }]);
-              const prods = await db.getProducts(); setProducts(prods);
-              const upd = prods.find(p=>p.id===logProduct.id);
-              if(upd) setLogProduct(upd);
-              setLogs(await getStockLogs(logProduct.id));
-              document.getElementById("adj-qty").value="";
+              const v = Number(adjustQty);
+              if (!v) { alert("調整数量を入力してください"); return; }
+              try {
+                await db.updateStock(logProduct.id, v);
+                const prods = await db.getProducts(); setProducts(prods);
+                const updated = prods.find(p=>p.id===logProduct.id);
+                if(updated) setLogProduct(updated);
+                setLogs(await getStockLogs(logProduct.id));
+                setAdjustQty("");
+              } catch (e) { alert("在庫調整エラー: " + e.message); }
             }}>調整</Btn>
           </div>
         </Field>
@@ -740,7 +874,7 @@ function ProductsView({ products, setProducts, user }) {
         <Field label="販売単価（円）"><input style={INP} type="number" value={f.price||""} onChange={e=>upd("price",e.target.value)}/></Field>
         <Field label="税率"><select style={SEL} value={f.taxRate||8} onChange={e=>upd("taxRate",Number(e.target.value))}><option value={8}>8%（軽減税率）</option><option value={10}>10%（標準税率）</option></select></Field>
         <Field label="ケース入数"><input style={INP} type="number" value={f.qtyPerCase||""} onChange={e=>upd("qtyPerCase",e.target.value)}/></Field>
-        <Field label="現在庫"><input style={INP} type="number" value={f.stock||0} onChange={e=>upd("stock",e.target.value)}/></Field>
+        <Field label="現在庫（在庫操作から変更）"><input style={{ ...INP, background:"#f3f4f6" }} type="number" value={f.stock||0} readOnly/></Field>
       </div>
       <Field label="備考"><input style={{ ...INP, marginTop:4 }} value={f.note||""} onChange={e=>upd("note",e.target.value)}/></Field>
       <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"flex-end" }}>
@@ -841,7 +975,7 @@ function SealUploader({ label, value, onChange }) {
 
 function SettingsView({ co, setCo }) {
   const [c, setC] = useState({ ...co });
-  const save = async () => { await db.saveCompany(c); setCo(c); alert("保存しました"); };
+  const save = async () => { try { await db.saveCompany(c); setCo(c); alert("保存しました"); } catch (e) { alert("設定保存エラー: " + e.message); } };
   const f = (label, key, ph) => <Field label={label}><input style={INP} value={c[key]||""} onChange={e=>setC(x=>({...x,[key]:e.target.value}))} placeholder={ph}/></Field>;
   return <div style={{ padding:20, maxWidth:560, overflowY:"auto", height:"100%" }}>
     <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:10, padding:18, marginBottom:14 }}>
@@ -854,6 +988,8 @@ function SettingsView({ co, setCo }) {
       {f("適格請求書登録番号","regNo","T4120001218286")}
       {f("振込先A（主）","bankA","りそな銀行 新大阪駅前支店 普通0436583")}
       {f("振込先B（副）","bankB","三井住友銀行 神戸営業部 普通預金1663502")}
+      {f("管理者メール（カンマ区切り）","adminEmails","shin@kobedaisho.com")}
+      <div style={{ fontSize:11, color:"#6b7280", marginBottom:10 }}>管理者は全員の発行履歴・明細CSVを閲覧できます。普通ユーザーは自分の作成分のみです。</div>
       <Btn variant="primary" onClick={save} small>保存</Btn>
     </div>
     <div style={{ background:"#fff", border:"1px solid #e5e7eb", borderRadius:10, padding:18, marginBottom:14 }}>
@@ -886,7 +1022,7 @@ function LoginScreen({ onSignIn }) {
       <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, marginBottom:28 }}>株式会社神戸大商</p>
       <div style={{ background:"rgba(255,255,255,0.06)", border:"0.5px solid rgba(255,255,255,0.15)", borderRadius:12, padding:26 }}>
         <p style={{ color:"rgba(255,255,255,0.5)", fontSize:13, marginBottom:18 }}>Google Workspaceアカウントでログイン</p>
-        <button onClick={async()=>{ setLoading(true); try { await onSignIn(); } finally { setLoading(false); } }} disabled={loading}
+        <button onClick={async()=>{ setLoading(true); try { await onSignIn(); } catch (e) { alert("ログインエラー: " + e.message); } finally { setLoading(false); } }} disabled={loading}
           style={{ display:"flex", alignItems:"center", gap:12, width:"100%", padding:"12px 16px", background:"#fff", border:"none", borderRadius:8, cursor:loading?"wait":"pointer", fontSize:14, fontFamily:"inherit", fontWeight:500, justifyContent:"center", opacity:loading?0.7:1 }}>
           <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
           {loading?"ログイン中...":"Googleでログイン"}
@@ -907,7 +1043,7 @@ export default function App() {
   const [sideOpen, setSideOpen] = useState(window.innerWidth > 600);
 
   useEffect(()=>{
-    supabase.auth.getSession().then(({ data:{ session } })=>{ setSession(session); setAppLoading(false); });
+    supabase.auth.getSession().then(({ data:{ session }, error })=>{ if (error) console.error(error); setSession(session); setAppLoading(false); }).catch((error)=>{ console.error(error); setAppLoading(false); });
     const { data:{ subscription } } = supabase.auth.onAuthStateChange((_e,s)=>setSession(s));
     return ()=>subscription.unsubscribe();
   }, []);

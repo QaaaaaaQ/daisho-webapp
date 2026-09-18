@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS company_settings (
   reg_no      TEXT DEFAULT 'T4120001218286',
   bank_a      TEXT DEFAULT 'りそな銀行　新大阪駅前支店　普通0436583',
   bank_b      TEXT DEFAULT '三井住友銀行　神戸営業部　普通預金1663502',
+  admin_emails TEXT DEFAULT 'shin@kobedaisho.com',
   updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -79,6 +80,31 @@ CREATE TRIGGER trg_company_updated_at
   BEFORE UPDATE ON company_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+-- ⑥ AI解析ログ（認識結果・未認識項目・Gemini生応答の診断用）
+-- 取引情報を含む可能性があるため、本人のログだけ参照可能にする。
+CREATE TABLE IF NOT EXISTS ai_parse_logs (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id      TEXT NOT NULL,
+  user_id         UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  operation       TEXT NOT NULL,
+  input_messages  JSONB,
+  raw_response    TEXT,
+  parsed_response JSONB,
+  status          TEXT NOT NULL,
+  error_message   TEXT,
+  finish_reason   TEXT,
+  usage_metadata  JSONB,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_parse_logs_created_at ON ai_parse_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_parse_logs_request_id ON ai_parse_logs(request_id);
+CREATE INDEX IF NOT EXISTS idx_ai_parse_logs_user_id ON ai_parse_logs(user_id);
+ALTER TABLE ai_parse_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "auth_read_own_ai_parse_logs" ON ai_parse_logs;
+CREATE POLICY "auth_read_own_ai_parse_logs"
+  ON ai_parse_logs FOR SELECT TO authenticated
+  USING (auth.uid() = user_id);
+
 -- =====================================================
 -- 印鑑画像カラム追加（既存DBへの追加用）
 -- Supabase SQL Editorで実行してください
@@ -101,6 +127,7 @@ CREATE TABLE IF NOT EXISTS products (
   code        TEXT,
   name        TEXT NOT NULL,
   origin      TEXT,
+  category    TEXT,
   unit        TEXT DEFAULT '個',
   price       NUMERIC DEFAULT 0,
   tax_rate    INTEGER DEFAULT 8,
@@ -132,7 +159,7 @@ CREATE POLICY "auth_customers" ON customers FOR ALL TO authenticated USING (true
 -- 在庫移動履歴
 CREATE TABLE IF NOT EXISTS stock_logs (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id  UUID REFERENCES products(id) ON DELETE CASCADE,
+  product_id  UUID REFERENCES products(id) ON DELETE RESTRICT,
   change      NUMERIC NOT NULL,
   reason      TEXT,
   doc_id      UUID,

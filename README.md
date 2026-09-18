@@ -1,7 +1,7 @@
 # 神戸大商 業務書類AIシステム　セットアップ手順
 
 **所要時間：約30分**  
-必要なもの：PC・Googleアカウント・Anthropic APIキー
+必要なもの：PC・Googleアカウント・Gemini APIキー
 
 ---
 
@@ -88,11 +88,11 @@ brew install supabase/tap/supabase
 npm install -g supabase
 ```
 
-### 2-2. Anthropic APIキーを取得
+### 2-2. Gemini APIキーを取得
 
-1. https://console.anthropic.com にアクセス
-2. 「API Keys」→「Create Key」
-3. キーをコピー（`sk-ant-...`で始まる文字列）
+1. https://aistudio.google.com/apikey にアクセス
+2. 「Create API key」を選択
+3. キーをコピー
 
 ### 2-3. Edge Function をデプロイ
 
@@ -107,10 +107,10 @@ supabase login
 supabase link --project-ref あなたのプロジェクトID
 
 # Edge Functionをデプロイ
-supabase functions deploy claude
+supabase functions deploy ai
 
-# Anthropic APIキーをセット
-supabase secrets set ANTHROPIC_API_KEY=sk-ant-あなたのAPIキー
+# Gemini APIキーをセット
+supabase secrets set GEMINI_API_KEY=あなたのAPIキー
 ```
 
 ---
@@ -166,7 +166,7 @@ supabase secrets set ANTHROPIC_API_KEY=sk-ant-あなたのAPIキー
 |---------|------|
 | Supabase | **無料**（月500MB・50,000リクエストまで） |
 | Vercel | **無料**（個人・チームプロジェクト） |
-| Anthropic API | 書類1枚あたり **約1〜3円** |
+| Gemini API | 利用モデル・トークン数により変動 |
 
 月100枚発行しても **約100〜300円/月** のAI費用のみ。
 
@@ -178,7 +178,7 @@ supabase secrets set ANTHROPIC_API_KEY=sk-ant-あなたのAPIキー
 → Supabase「Authentication → URL Configuration」のSite URLが正しいか確認
 
 **Q: 書類作成でエラーが出る**  
-→ Edge FunctionのANTHROPIC_API_KEYが正しく設定されているか確認  
+→ Edge FunctionのGEMINI_API_KEYが正しく設定されているか確認
 　 `supabase secrets list` で確認できます
 
 **Q: データが保存されない**  
@@ -203,11 +203,13 @@ daisho-webapp/
 │       └── pdf.js         ← PDF生成
 └── supabase/
     ├── schema.sql         ← DBテーブル定義
+    ├── migrations/
+    │   └── 002_document_numbers_and_stock_rpc.sql ← 連番・在庫トランザクション
     └── functions/
-        └── claude/
+        └── ai/
             └── index.ts   ← AI処理（Edge Function）
 ```
 
 ---
 
-*株式会社神戸大商 様専用 | Powered by Supabase + Anthropic Claude + Vercel*
+*株式会社神戸大商 様専用 | Powered by Supabase + Google Gemini + Vercel*

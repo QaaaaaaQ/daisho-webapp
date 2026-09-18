@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { normalizeDocument } from "./domain";
 
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -16,15 +17,14 @@ function normalizeDoc(row) {
   };
 }
 
-// 重複書類の判定用シグネチャ（種別・取引先・日付・金額・品目を正規化して連結）
-// 単位/単価の表記ゆれ（"kg"↔空白 等）に影響されないよう、品目は「品名＋数量＋金額」で比較する。
+// 重複書類の判定用シグネチャ。帳票の意味を変える全フィールドを含める。
 function docSignature(doc) {
   const items = (doc.items || [])
-    .map(it => [String(it.name || "").trim(), Number(it.qty || 0), Number(it.amount || 0)].join("~"))
-    .filter(s => s !== "~0~0")
+    .map(it => [String(it.name || "").trim(), String(it.origin || "").trim(), Number(it.qty || 0), String(it.unit || "").trim(), Number(it.price || 0), Number(it.amount || 0), Number(it.taxRate) === 10 ? 10 : 8, Boolean(it.taxIncluded)].join("~"))
+    .filter((s) => s.split("~")[0] || Number(s.split("~")[2]) !== 0 || Number(s.split("~")[5]) !== 0)
     .sort()
     .join("||");
-  return [doc.docType || "", String(doc.customer || "").trim(), doc.date || "", Number(doc.amount || 0), String(doc.description || "").trim(), items].join("##");
+  return [doc.docType || "", String(doc.customer || "").trim(), doc.date || "", String(doc.subject || "").trim(), doc.dueDate || "", String(doc.bank || "").trim(), Number(doc.amount || 0), String(doc.description || "").trim(), items].join("##");
 }
 
 export const db = {
@@ -45,23 +45,18 @@ export const db = {
         .eq("customer", doc.customer)
         .gte("created_at", sinceIso);
       q = doc.date ? q.eq("date", doc.date) : q.is("date", null);
-      const { data: recent } = await q;
+      const { data: recent, error: recentError } = await q;
+      if (recentError) throw recentError;
       const sig = docSignature(doc);
       const existing = (recent || []).map(normalizeDoc).find(d => docSignature(d) === sig);
       if (existing) { existing._duplicate = true; return existing; }
     }
 
-    const { data, error } = await supabase.from("documents").insert([{
-      doc_type: doc.docType, doc_no: doc.docNo, date: doc.date || null,
-      customer: doc.customer, subject: doc.subject || null, due_date: doc.dueDate || null,
-      bank: doc.bank || null, note: doc.note || null, amount: doc.amount || null,
-      description: doc.description || null, to_addr: doc.toAddr || null,
-      to_contact: doc.toContact || null, items: doc.items || [],
-        expiry_date: doc.expiryDate || null, conditions: doc.conditions || null,
-      created_by: user.id,
-      created_by_name: user.user_metadata?.full_name || user.email,
-      created_by_email: user.email,
-    }]).select().single();
+    if (!user?.id) throw new Error("ログインが必要です");
+    const { data, error } = await supabase.rpc("create_document", { p_doc: {
+      ...normalizeDocument(doc),
+      savedBy: user.user_metadata?.full_name || user.email,
+    }});
     if (error) {
       // DB側トリガー（10分以内の同一内容）に弾かれた場合は分かりやすいエラーに変換
       if (error.code === "23505") {
@@ -74,50 +69,29 @@ export const db = {
     return normalizeDoc(data);
   },
   async updateDocument(id, doc) {
-    const { data, error } = await supabase.from("documents").update({
-      doc_type: doc.docType, date: doc.date || null, customer: doc.customer,
-      subject: doc.subject || null, due_date: doc.dueDate || null, bank: doc.bank || null,
-      note: doc.note || null, amount: doc.amount || null, description: doc.description || null,
-      to_addr: doc.toAddr || null, to_contact: doc.toContact || null, items: doc.items || [],
-        expiry_date: doc.expiryDate || null, conditions: doc.conditions || null,
-    }).eq("id", id).select().single();
+    const { data, error } = await supabase.rpc("update_document", { p_doc_id: id, p_doc: normalizeDocument(doc) });
     if (error) throw error;
     return normalizeDoc(data);
   },
   async deleteDocument(id) {
-    // 削除前に書類の品目を取得して在庫を戻す
-    const { data: doc } = await supabase.from("documents").select("items, doc_type, doc_no, customer").eq("id", id).single();
-    if (doc && doc.items && doc.items.length > 0 && (doc.doc_type === "納品書" || doc.doc_type === "請求書")) {
-      for (const item of doc.items) {
-        if (!item.name || !item.qty) continue;
-        const { data: prod } = await supabase.from("products").select("id, stock").eq("name", item.name).maybeSingle();
-        if (prod) {
-          const qty = Number(item.qty);
-          await supabase.from("products").update({ stock: Number(prod.stock || 0) + qty }).eq("id", prod.id);
-          await supabase.from("stock_logs").insert([{
-            product_id: prod.id, change: qty,
-            reason: "書類削除による在庫戻し: " + doc.customer + " " + doc.doc_no,
-            doc_id: id, created_by: null
-          }]);
-        }
-      }
-    }
-    const { error } = await supabase.from("documents").delete().eq("id", id);
+    const { error } = await supabase.rpc("delete_document", { p_doc_id: id });
     if (error) throw error;
   },
 
   // ── Company ────────────────────────────────────────────────
   async getCompany() {
-    const { data } = await supabase.from("company_settings").select("*").limit(1).maybeSingle();
+    const { data, error } = await supabase.from("company_settings").select("*").limit(1).maybeSingle();
+    if (error) throw error;
     if (!data) return null;
     return { name: data.name, manager: data.manager, addr: data.addr, tel: data.tel, fax: data.fax,
-      regNo: data.reg_no, bankA: data.bank_a, bankB: data.bank_b,
+      regNo: data.reg_no, bankA: data.bank_a, bankB: data.bank_b, adminEmails: data.admin_emails || "",
       sealImg: data.seal_img || "", personSealImg: data.person_seal_img || "", logoImg: data.logo_img || "", _id: data.id };
   },
   async saveCompany(co) {
-    const { data: ex } = await supabase.from("company_settings").select("id").limit(1).maybeSingle();
+    const { data: ex, error: findError } = await supabase.from("company_settings").select("id").limit(1).maybeSingle();
+    if (findError) throw findError;
     const payload = { name: co.name, manager: co.manager, addr: co.addr, tel: co.tel, fax: co.fax,
-      reg_no: co.regNo, bank_a: co.bankA, bank_b: co.bankB,
+      reg_no: co.regNo, bank_a: co.bankA, bank_b: co.bankB, admin_emails: co.adminEmails || "",
       seal_img: co.sealImg || null, person_seal_img: co.personSealImg || null, logo_img: co.logoImg || null };
     if (ex) { const { error } = await supabase.from("company_settings").update(payload).eq("id", ex.id); if (error) throw error; }
     else { const { error } = await supabase.from("company_settings").insert([payload]); if (error) throw error; }
@@ -138,7 +112,7 @@ export const db = {
     const payload = { code: p.code, name: p.name, origin: p.origin, unit: p.unit,
       price: p.price, purchase_price: p.purchasePrice || null, category: p.category || null,
       tax_rate: p.taxRate, case_qty: p.caseQty, qty_per_case: p.qtyPerCase,
-      stock: p.stock || 0, note: p.note };
+      note: p.note };
     if (p.id) {
       const { error } = await supabase.from("products").update(payload).eq("id", p.id);
       if (error) throw error;
@@ -152,9 +126,9 @@ export const db = {
     if (error) throw error;
   },
   async updateStock(id, change) {
-    const { data } = await supabase.from("products").select("stock").eq("id", id).single();
-    const newStock = Number(data?.stock || 0) + Number(change);
-    await supabase.from("products").update({ stock: newStock }).eq("id", id);
+    const { data, error } = await supabase.rpc("adjust_stock", { p_product_id: id, p_change: Number(change), p_reason: "手動調整", p_doc_id: null });
+    if (error) throw error;
+    return Number(data);
   },
 
   // ── Customers ──────────────────────────────────────────────
@@ -209,17 +183,12 @@ export async function signInWithGoogle() {
 
 // ── 入庫処理 ─────────────────────────────────────────────────
 export async function receiveStock(productId, productName, qty, supplier, note, userId) {
-  const { data: prod } = await supabase.from("products").select("id, stock").eq("id", productId).single();
-  if (!prod) throw new Error("商品が見つかりません");
-  const newStock = Number(prod.stock || 0) + Number(qty);
-  await supabase.from("products").update({ stock: newStock }).eq("id", productId);
-  await supabase.from("stock_logs").insert([{
-    product_id: productId,
-    change: Number(qty),
-    reason: "入庫" + (supplier ? ": " + supplier : "") + (note ? " " + note : ""),
-    created_by: userId || null,
-  }]);
-  return newStock;
+  const amount = Number(qty);
+  if (!(amount > 0)) throw new Error("入庫数量は0より大きくしてください");
+  const reason = "入庫" + (supplier ? ": " + supplier : "") + (note ? " " + note : "");
+  const { data, error } = await supabase.rpc("adjust_stock", { p_product_id: productId, p_change: amount, p_reason: reason, p_doc_id: null });
+  if (error) throw error;
+  return Number(data);
 }
 
 // ── 重複商品マージ ────────────────────────────────────────────
@@ -255,8 +224,9 @@ export async function autoRegisterAndStock(doc, user) {
 
   // ① 顧客マスター自動登録
   if (doc.customer) {
-    const { data: existing } = await supabase
+    const { data: existing, error: customerLookupError } = await supabase
       .from("customers").select("id").eq("name", doc.customer).maybeSingle();
+    if (customerLookupError) throw customerLookupError;
     if (!existing) {
       const { data: newCust } = await supabase.from("customers").insert([{
         name: doc.customer,
@@ -267,57 +237,18 @@ export async function autoRegisterAndStock(doc, user) {
     }
   }
 
-  // ② 商品マスター自動登録 + 出庫記録（納品書・請求書のみ）
-  if (doc.items && doc.items.length > 0) {
-    for (const item of doc.items) {
-      if (!item.name) continue;
-
-      // 商品マスターに存在するか確認
-      const { data: existingProd } = await supabase
-        .from("products").select("id, stock").eq("name", item.name).maybeSingle();
-
-      let productId = existingProd?.id;
-
-      // 既存商品でoriginが未設定なら更新
-      if (existingProd && !existingProd.origin && item.origin) {
-        await supabase.from("products").update({ origin: item.origin }).eq("id", existingProd.id);
-      }
-
-      // 未登録なら追加
-      if (!existingProd) {
-        const { data: newProd } = await supabase.from("products").insert([{
-          name: item.name,
-          origin: item.origin || null,
-          unit: item.unit || "個",
-          price: item.price || 0,
-          purchase_price: null,
-          tax_rate: item.taxRate || 8,
-          qty_per_case: item.qtyPerCase || null,
-          stock: 0,
-        }]).select().single();
-        if (newProd) {
-          productId = newProd.id;
-          results.newProducts.push(newProd.name);
-        }
-      }
-
-      // 出庫記録（在庫を減らす）
-      if (productId && item.qty) {
-        const qty = Number(item.qty);
-        const currentStock = existingProd ? Number(existingProd.stock || 0) : 0;
-        // 在庫更新
-        await supabase.from("products").update({ stock: currentStock - qty }).eq("id", productId);
-        // 出庫ログ
-        const { data: log } = await supabase.from("stock_logs").insert([{
-          product_id: productId,
-          change: -qty,
-          reason: doc.docType + " 出庫: " + doc.customer + " " + doc.docNo,
-          doc_id: doc.id || null,
-          created_by: user.id,
-        }]).select().single();
-        if (log) results.stockLogs.push({ name: item.name, qty });
-      }
-    }
+  // ② 商品マスター自動登録 + 出庫記録は DB の一トランザクションで行う。
+  if ((doc.docType === "納品書" || doc.docType === "請求書") && doc.id && doc.items?.length > 0) {
+    const { data: logs, error } = await supabase.rpc("register_document_stock", {
+      p_doc_id: doc.id,
+      p_doc_type: doc.docType,
+      p_customer: doc.customer,
+      p_doc_no: doc.docNo,
+      p_items: doc.items,
+    });
+    if (error) throw error;
+    results.stockLogs = Array.isArray(logs) ? logs : [];
+    results.newProducts = results.stockLogs.filter((log) => log.newProduct).map((log) => log.name);
   }
 
   return results;
