@@ -109,9 +109,10 @@ export const db = {
     });
   },
   async saveProduct(p) {
+    const nullableInteger = (value) => value === "" || value == null ? null : Number(value);
     const payload = { code: p.code, name: p.name, origin: p.origin, unit: p.unit,
       price: p.price, purchase_price: p.purchasePrice || null, category: p.category || null,
-      tax_rate: p.taxRate, case_qty: p.caseQty, qty_per_case: p.qtyPerCase,
+      tax_rate: p.taxRate, case_qty: nullableInteger(p.caseQty), qty_per_case: nullableInteger(p.qtyPerCase),
       note: p.note };
     if (p.id) {
       const { error } = await supabase.from("products").update(payload).eq("id", p.id);
