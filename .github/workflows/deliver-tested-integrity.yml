@@ -1,0 +1,69 @@
+name: Deliver tested integrity source
+on:
+  push:
+    branches: [fix/20261027-sales-stock-integrity]
+    paths: [.github/workflows/deliver-tested-integrity.yml]
+permissions:
+  contents: read
+jobs:
+  publish:
+    if: github.repository == 'QaaaaaaQ/daisho-webapp' && github.ref == 'refs/heads/fix/20261027-sales-stock-integrity' && github.event.head_commit.message == 'chore: deliver verified integrity source'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: fix/20261027-sales-stock-integrity
+          persist-credentials: false
+      - name: Apply exact verified file edits
+        run: |
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,pathlib,subprocess
+          parts=[pathlib.Path('.delivery/manifest.'+str(i)+'.b64').read_text().strip() for i in range(3)]
+          raw=lzma.decompress(base64.b64decode(''.join(parts),validate=True))
+          expected='9886b5524962ed33707143631be988d970b5f87b02df89a7a05d2cde31234086'
+          assert hashlib.sha256(raw).hexdigest()==expected, 'Delivery checksum mismatch'
+          manifest=json.loads(raw)
+          assert len(manifest)==19
+          for f in manifest:
+              p=pathlib.Path(f['path'])
+              assert not p.is_absolute() and '..' not in p.parts
+              assert p.parts[0] in {'src','scripts','test','supabase','docs','.gitignore','package.json','package-lock.json'}
+              old=p.read_bytes() if p.exists() else b''
+              assert (hashlib.sha256(old).hexdigest() if old else None)==f['old'], 'Base changed: '+str(p)
+              lines=old.decode('utf-8').splitlines(keepends=True)
+              for start,end,text in reversed(f['edits']):
+                  lines[start:end]=text.splitlines(keepends=True)
+              result=''.join(lines).encode('utf-8')
+              assert hashlib.sha256(result).hexdigest()==f['new'], 'Result mismatch: '+str(p)
+              p.parent.mkdir(parents=True,exist_ok=True)
+              p.write_bytes(result)
+              subprocess.run(['git','add','--',str(p)],check=True)
+          subprocess.run(['git','rm','--','.delivery/manifest.0.b64','.delivery/manifest.1.b64','.delivery/manifest.2.b64'],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          print('All 19 source files match the locally tested SHA256 values.')
+          PY
+      - name: Install exact locked packages
+        run: npm ci --ignore-scripts
+      - name: Verify all unit and PostgreSQL fixture tests
+        run: npm test
+      - name: Verify production build
+        env:
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: ci-placeholder-not-a-secret
+        run: npm run build
+      - name: Commit and push source to the repair branch only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix: transactional sales workflows, tax consistency, confirmed drafts and task dashboard'
+          python3 - <<'PY'
+          import base64,os,subprocess
+          env=os.environ.copy()
+          env['GIT_CONFIG_COUNT']='1'
+          env['GIT_CONFIG_KEY_0']='http.https://github.com/.extraheader'
+          env['GIT_CONFIG_VALUE_0']='AUTHORIZATION: basic '+base64.b64encode(('x-access-token:'+env.pop('GH_TOKEN')).encode()).decode()
+          subprocess.run(['git','push','origin','HEAD:refs/heads/fix/20261027-sales-stock-integrity'],env=env,check=True)
+          PY
