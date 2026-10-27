@@ -713,13 +713,17 @@ function ProductsView({ products, setProducts, user }) {
   const [sortKey, setSortKey] = useState("code");
   const [sortDir, setSortDir] = useState(1);
   const [catFilter, setCatFilter] = useState("全て");
+  const [cellFilter, setCellFilter] = useState(null);
   const [receiving, setReceiving] = useState({ qty:"", supplier:"", note:"" });
   const [adjustQty, setAdjustQty] = useState("");
   const categories = [...new Set(products.map(p=>p.category).filter(Boolean))].sort();
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
   const updR = (k,v) => setReceiving(x=>({...x,[k]:v}));
+  const selectCell = (key, value) => setCellFilter(prev => prev?.key === key && prev?.value === String(value ?? "") ? null : { key, value: String(value ?? "") });
+  const filterableCell = (key, value, children, style={}) => <td title="クリックしてこの内容で絞り込み（再クリックで解除）" onClick={()=>selectCell(key,value)} style={{ padding:"6px 10px", cursor:"pointer", background:cellFilter?.key===key&&cellFilter?.value===String(value??"")?"#dbeafe":undefined, ...style }}>{children}</td>;
   const sort = (key) => { if(sortKey===key) setSortDir(d=>-d); else { setSortKey(key); setSortDir(1); } };
-  const sorted = [...products].sort((a,b)=>{
+  const filtered = products.filter(p => (catFilter==="全て" || p.category===catFilter) && (!cellFilter || String(p[cellFilter.key]??"")===cellFilter.value));
+  const sorted = [...filtered].sort((a,b)=>{
     const av=a[sortKey]||"", bv=b[sortKey]||"";
     if(!isNaN(Number(av))&&!isNaN(Number(bv))) return (Number(av)-Number(bv))*sortDir;
     return String(av).localeCompare(String(bv),"ja")*sortDir;
@@ -766,7 +770,8 @@ function ProductsView({ products, setProducts, user }) {
         <option>全て</option>
         {categories.map(c=><option key={c} value={c}>{c}</option>)}
       </select>
-      <span style={{ fontSize:11, color:"#9ca3af" }}>▲▼ヘッダークリックで並び替え</span>
+      <span style={{ fontSize:11, color:"#9ca3af" }}>▲▼ヘッダーで並び替え・内容をクリックで絞り込み（{filtered.length}件表示）</span>
+      {(cellFilter || catFilter!=="全て") && <Btn small onClick={()=>{setCellFilter(null);setCatFilter("全て");}}>✕ フィルタ解除{cellFilter ? `（${({code:"コード",category:"分類",name:"商品名",origin:"産地",unit:"単位",taxRate:"税率"})[cellFilter.key] || cellFilter.key}: ${cellFilter.value}）` : ""}</Btn>}
       <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
         <Btn small onClick={doMerge} style={{ background:"#f59e0b", color:"#fff", border:"none" }}>🔀 重複マージ</Btn>
         <Btn variant="primary" small onClick={()=>open(null)}>＋ 新規登録</Btn>
@@ -788,20 +793,20 @@ function ProductsView({ products, setProducts, user }) {
           <th style={{ padding:"7px 10px", fontWeight:400 }}>操作</th>
         </tr></thead>
         <tbody>
-          {sorted.filter(p=>catFilter==="全て"||p.category===catFilter).map((p,i)=>{
+          {sorted.map((p,i)=>{
             const margin = (p.purchasePrice&&p.price&&Number(p.price)>0) ? Math.round((1-Number(p.purchasePrice)/Number(p.price))*100) : null;
             return <tr key={p.id} style={{ background:i%2===0?"#fff":"#f9fafb", borderBottom:"1px solid #f0f0f0" }}>
-              <td style={{ padding:"6px 10px", color:"#9ca3af" }}>{p.code}</td>
-              <td style={{ padding:"6px 10px" }}>{p.category&&<span style={{ fontSize:11, background:"#eef2ff", color:"#3730a3", padding:"1px 7px", borderRadius:10 }}>{p.category}</span>}</td>
-              <td style={{ padding:"6px 10px", fontWeight:500 }}>{p.name}</td>
-              <td style={{ padding:"6px 10px" }}>{p.origin}</td>
-              <td style={{ padding:"6px 10px" }}>{p.unit}</td>
+              {filterableCell("code",p.code,p.code,{ color:"#9ca3af" })}
+              {filterableCell("category",p.category,p.category&&<span style={{ fontSize:11, background:"#eef2ff", color:"#3730a3", padding:"1px 7px", borderRadius:10 }}>{p.category}</span>)}
+              {filterableCell("name",p.name,p.name,{ fontWeight:500 })}
+              {filterableCell("origin",p.origin,p.origin)}
+              {filterableCell("unit",p.unit,p.unit)}
               <td style={{ padding:"6px 10px", textAlign:"right", color:"#6b7280" }}>{p.purchasePrice?fm(p.purchasePrice)+"円":"-"}</td>
               <td style={{ padding:"6px 10px", textAlign:"right" }}>{p.price?fm(p.price)+"円":"-"}</td>
               <td style={{ padding:"6px 10px", textAlign:"right", color:margin!==null?(margin>=20?"#16a34a":margin>=0?"#d97706":"#dc2626"):"#9ca3af", fontWeight:500 }}>
                 {margin!==null ? margin+"%" : "-"}
               </td>
-              <td style={{ padding:"6px 10px" }}>{p.taxRate + "%"}</td>
+              {filterableCell("taxRate",p.taxRate,p.taxRate + "%")}
               <td style={{ padding:"6px 10px", textAlign:"right", color:Number(p.stock)<0?"#dc2626":"inherit", fontWeight:500 }}>{fm(p.stock)}</td>
               <td style={{ padding:"6px 8px" }}>
                 <div style={{ display:"flex", gap:4 }}>
@@ -812,7 +817,7 @@ function ProductsView({ products, setProducts, user }) {
               </td>
             </tr>;
           })}
-          {products.length===0&&<tr><td colSpan={11} style={{ textAlign:"center", padding:32, color:"#9ca3af" }}>商品を登録してください</td></tr>}
+          {sorted.length===0&&<tr><td colSpan={11} style={{ textAlign:"center", padding:32, color:"#9ca3af" }}>{products.length===0?"商品を登録してください":"該当する商品がありません。フィルタを解除してください。"}</td></tr>}
         </tbody>
       </table>
     </div>
@@ -864,8 +869,8 @@ function ProductsView({ products, setProducts, user }) {
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
         <Field label="商品コード"><input style={INP} value={f.code||""} onChange={e=>upd("code",e.target.value)} placeholder="FG-001"/></Field>
         <Field label="分類">
-          <input style={INP} list="product-category-list" value={f.category||""} onChange={e=>upd("category",e.target.value)} placeholder="ふぐ類 / 貝類"/>
-          <datalist id="product-category-list"><option value="ふぐ類"/><option value="貝類"/></datalist>
+          <input style={INP} list="product-category-list" value={f.category||""} onChange={e=>upd("category",e.target.value)} placeholder="ふぐ類 / アワビ など"/>
+          <datalist id="product-category-list">{[...new Set([...categories,"ふぐ類","赤貝","サザエ","蛤","アサリ","アワビ","ホタテ","蟹類","あんこう","うなぎ"])].map(c=><option key={c} value={c}/>)}</datalist>
         </Field>
         <Field label="商品名 *"><input style={INP} value={f.name||""} onChange={e=>upd("name",e.target.value)} placeholder="韓国産養殖活アワビ"/></Field>
         <Field label="産地"><input style={INP} value={f.origin||""} onChange={e=>upd("origin",e.target.value)} placeholder="韓国産"/></Field>
