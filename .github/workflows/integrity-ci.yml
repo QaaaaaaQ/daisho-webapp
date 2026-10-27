@@ -23,9 +23,14 @@ jobs:
           VITE_SUPABASE_URL: https://example.supabase.co
           VITE_SUPABASE_ANON_KEY: ci-placeholder-not-a-secret
         run: npm run build
+      - name: Prepare isolated database test tools
+        if: github.event_name == 'push' && github.ref == 'refs/heads/fix/20261027-sales-stock-integrity'
+        run: |
+          npm install --prefix .qa-tools --no-save --ignore-scripts @electric-sql/pglite@0.3.14 supabase@2.75.0
+          npm rebuild --prefix .qa-tools supabase
       - name: Prepare isolated source test workspace
         if: github.event_name == 'push' && github.ref == 'refs/heads/fix/20261027-sales-stock-integrity'
-        run: tar --exclude=.git --exclude='.env*' --exclude=dist --exclude=.vercel -czf /tmp/daisho-test-workspace.tar.gz .
+        run: tar --exclude='./.git' --exclude='.env*' --exclude='./dist' --exclude='./.vercel' --exclude='./supabase/.temp' -czf /tmp/daisho-test-workspace.tar.gz .
       - name: Export test workspace
         if: github.event_name == 'push' && github.ref == 'refs/heads/fix/20261027-sales-stock-integrity'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
