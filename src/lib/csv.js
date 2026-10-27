@@ -1,5 +1,5 @@
-import { calcTax } from "./pdf";
-import { documentTotal } from "./domain";
+import { documentTax } from "./money.js";
+import { documentTotal } from "./domain.js";
 
 const HEADERS = [
   "書類種別", "書類番号", "日付", "取引先", "件名", "入金期日", "有効期限", "取引条件",
@@ -15,7 +15,7 @@ function cell(value) {
 
 function rowFor(doc, item) {
   const hasItem = !!item;
-  const itemTotal = calcTax(doc.items || []).total;
+  const itemTotal = documentTax(doc).total;
   const amount = documentTotal(doc, itemTotal);
   return [
     doc.docType, doc.docNo, doc.date, doc.customer, doc.subject, doc.dueDate, doc.expiryDate, doc.conditions,

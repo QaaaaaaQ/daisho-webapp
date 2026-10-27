@@ -1,5 +1,8 @@
+import { HomeDashboard, ShipmentChoice, VoidDocumentModal } from "./components/WorkflowPanels.jsx";
+import { isBillable, documentStatus } from "./lib/workflow-client.js";
+import { documentTax } from "./lib/money.js";
 import { useState, useEffect, useRef } from "react";
-import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs, receiveStock, mergeDuplicateProducts } from "./lib/supabase";
+import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs, receiveStock } from "./lib/supabase";
 import { generateAndDownloadPDF, calcTax } from "./lib/pdf";
 import { downloadDocumentsCSV } from "./lib/csv";
 import { draftItem, localDate, validItems, validateDocument, documentTotal } from "./lib/domain";
@@ -7,8 +10,9 @@ import { draftItem, localDate, validItems, validateDocument, documentTotal } fro
 const tod = () => localDate();
 const fm = (n) => Number(n || 0).toLocaleString("ja-JP");
 const fd = (d) => { if (!d) return ""; try { const t = new Date(d); return isNaN(t) ? String(d) : `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`; } catch { return String(d); } };
-const totalFor = (doc) => documentTotal(doc, calcTax(validItems(doc?.items)).total);
-const receiptDetailTotal = (doc) => calcTax(validItems(doc?.items)).total;
+const totalFor = (doc) => documentTotal(doc, documentTax(doc).total);
+const previewTax = items => {try{return calcTax(items);}catch(e){return {...calcTax([]),error:e.message};}};
+const receiptDetailTotal = (doc) => previewTax(validItems(doc?.items)).total;
 const receiptAmountMismatch = (doc) => doc?.docType === "領収書" && validItems(doc?.items).length > 0 && Number(doc?.amount || 0) > 0 && Math.abs(Number(doc.amount) - receiptDetailTotal(doc)) > 0.01;
 const normalizeReceiptForSave = (doc) => {
   if (doc?.docType !== "領収書") return doc;
@@ -62,6 +66,7 @@ function ItemsEditor({ items, products, onChange, docType="納品書" }) {
     onChange(items.map((it, j) => {
       if (j !== i) return it;
       const u = { ...it, [k]: v };
+      if(k==="name"){delete u.productId;delete u.productCode;}
       if (k === "qty" || k === "price") u.amount = Number(u.qty||0) * Number(u.price||0);
       return u;
     }));
@@ -69,12 +74,13 @@ function ItemsEditor({ items, products, onChange, docType="納品書" }) {
   const addItem = () => onChange([...items, draftItem(tod(), docType)]);
   const remItem = (i) => onChange(items.filter((_,j)=>j!==i));
   const fill = (i, p) => {
-    const u = { ...items[i], name:p.name, unit:p.unit, price:p.price, origin:p.origin||"", taxRate:p.taxRate||8, taxIncluded: docType === "領収書" ? true : Boolean(items[i].taxIncluded) };
+    const u = { ...items[i], productId:p.id, productCode:p.code, name:p.name, unit:p.unit, price:p.price, origin:p.origin||"", taxRate:p.taxRate||8, taxIncluded: docType === "領収書" ? true : Boolean(items[i].taxIncluded) };
     u.amount = Number(u.qty||0) * Number(u.price||0);
     onChange(items.map((it,j)=>j===i?u:it));
   };
-  const tx = calcTax(items);
+  const tx = previewTax(items);
   return <div>
+    {tx.error&&<p role="alert" style={{color:"#b91c1c",fontSize:12}}>{"\u6570\u91cf\u30fb\u91d1\u984d\u306e\u5165\u529b\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"}</p>}
     <div style={{ overflowX:"auto" }}>
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, minWidth:780 }}>
         <thead><tr style={{ background:N, color:"#fff" }}>
@@ -84,9 +90,9 @@ function ItemsEditor({ items, products, onChange, docType="納品書" }) {
           {items.map((it,i)=><tr key={i} style={{ borderBottom:"1px solid #f0f0f0" }}>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:110, fontSize:11, padding:"4px 5px" }} type="date" value={it.date||""} onChange={e=>upd(i,"date",e.target.value)}/></td>
             <td style={{ padding:"3px 4px" }}>
-              <select style={{ ...SEL, width:130, fontSize:11, padding:"4px 5px" }} value={it.name} onChange={e=>{ const p=products.find(x=>x.name===e.target.value); if(p) fill(i,p); else upd(i,"name",e.target.value); }}>
+              <select style={{ ...SEL, width:130, fontSize:11, padding:"4px 5px" }} value={it.productId || products.find(p=>p.name===it.name)?.id || ""} onChange={e=>{ const p=products.find(x=>x.id===e.target.value); if(p) fill(i,p); else upd(i,"name",e.target.value); }}>
                 <option value="">品名選択</option>
-                {products.map(p=><option key={p.id} value={p.name}>{p.name}</option>)}
+                {products.map(p=><option key={p.id} value={p.id}>{[p.code,p.name,p.origin].filter(Boolean).join(" / ")}</option>)}
               </select>
             </td>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:70, fontSize:11, padding:"4px 5px" }} value={it.origin||""} onChange={e=>upd(i,"origin",e.target.value)} placeholder="韓国産"/></td>
@@ -126,7 +132,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
   const [f, setF] = useState({ docType:"納品書", date:tod(), customer:"", subject:"", dueDate:"", expiryDate:"", conditions:"", bank:co.bankA||"", note:"", amount:"", description:"商品代として", items:[empty] });
   const [saving, setSaving] = useState(false);
   const receiptPreviewItems = validItems(f.items);
-  const receiptItemsTotal = calcTax(receiptPreviewItems).total;
+  const receiptItemsTotal = previewTax(receiptPreviewItems).total;
   const receiptPreviewAmount = Number(f.amount||0) > 0 ? Number(f.amount) : receiptItemsTotal;
   const receiptAmountIsMismatched = receiptPreviewItems.length > 0 && Number(f.amount||0) > 0 && Math.abs(Number(f.amount) - receiptItemsTotal) > 0.01;
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
@@ -209,6 +215,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
     </div>}
     <>
     <div style={{ fontWeight:500, fontSize:13, marginBottom:8, color:"#374151" }}>{f.docType==="領収書"?"内容明細":"品目"}</div>
+    <ShipmentChoice doc={f} onChange={v=>upd("stockManaged",v)}/>
     <ItemsEditor items={f.items} products={products} docType={f.docType} onChange={items=>upd("items",items)}/>
     </>
     <Field label="備考"><input style={{ ...INP, marginTop:10 }} value={f.note} onChange={e=>upd("note",e.target.value)} placeholder="任意"/></Field>
@@ -222,17 +229,20 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
 
 function DocEditModal({ doc, onClose, onSave, co, products }) {
   const [d, setD] = useState({ ...doc });
+  const [saving,setSaving]=useState(false);
+  const saveLock=useRef(false);
   const editReceiptItems = validItems(d.items);
-  const editReceiptItemsTotal = calcTax(editReceiptItems).total;
+  const editReceiptItemsTotal = previewTax(editReceiptItems).total;
   const editReceiptAmountIsMismatched = editReceiptItems.length > 0 && Number(d.amount||0) > 0 && Math.abs(Number(d.amount) - editReceiptItemsTotal) > 0.01;
   const upd = (k,v) => setD(x=>({...x,[k]:v}));
-  const submit = () => {
-    if (!confirmReceiptAmount(d)) return;
-    onSave(d);
+  const submit = async () => {
+    if(saveLock.current||!confirmReceiptAmount(d))return;
+    saveLock.current=true;setSaving(true);
+    try{await onSave(d);}finally{saveLock.current=false;setSaving(false);}
   };
   return <Modal title={`${d.docType} 編集`} onClose={onClose} maxW={900} tall>
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
-      <Field label="書類種別"><select style={SEL} value={d.docType} onChange={e=>upd("docType",e.target.value)}><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option></select></Field>
+      <Field label="書類種別"><select style={SEL} disabled={Boolean(d.id)} value={d.docType} onChange={e=>upd("docType",e.target.value)}><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option></select></Field>
       <Field label="日付"><input style={INP} type="date" value={d.date||""} onChange={e=>upd("date",e.target.value)}/></Field>
       <Field label="入金期日"><input style={INP} type="date" value={d.dueDate||""} onChange={e=>upd("dueDate",e.target.value)}/></Field>
       <Field label="取引先"><input style={INP} value={d.customer||""} onChange={e=>upd("customer",e.target.value)}/></Field>
@@ -243,6 +253,7 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
     </div>
     <>
       <div style={{ fontWeight:500, fontSize:13, marginBottom:8 }}>{d.docType==="領収書"?"内容明細":"品目"}</div>
+      <ShipmentChoice doc={d} onChange={v=>upd("stockManaged",v)}/>
       <ItemsEditor items={d.items||[]} products={products||[]} docType={d.docType} onChange={items=>upd("items",items)}/>
     </>
     {d.docType==="領収書"&&<>
@@ -254,13 +265,13 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
     <Field label="備考"><input style={{ ...INP, marginTop:8 }} value={d.note||""} onChange={e=>upd("note",e.target.value)}/></Field>
     <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"flex-end" }}>
       <Btn onClick={onClose}>キャンセル</Btn>
-      <Btn variant="primary" onClick={submit}>✅ 保存</Btn>
+      <Btn variant="primary" disabled={saving} onClick={submit}>✅ 保存</Btn>
     </div>
   </Modal>;
 }
 
 function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
-  const tx = calcTax(doc.items||[]);
+  const tx = documentTax(doc);
   const docTotal = totalFor(doc);
   const hasReceiptDetails = validItems(doc.items).length > 0;
   const tc = doc.docType==="請求書"?"#1d4ed8":doc.docType==="領収書"?"#7c3aed":doc.docType==="見積書"?"#d97706":"#047857";
@@ -284,8 +295,8 @@ function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
           <div style={{ fontSize:15, fontWeight:600, marginTop:2 }}>{"合計 " + fm(docTotal) + "円"}</div>
         </div>
         <div style={{ display:"flex", gap:5, flexWrap:"wrap", justifyContent:"flex-end" }}>
-          <Btn small onClick={onEdit}>✏️ 編集</Btn>
-          <Btn small variant="primary" onClick={onPrint}>📄 PDF生成</Btn>
+          <Btn small onClick={onEdit}>{saved?"\u7de8\u96c6":"\u5185\u5bb9\u78ba\u8a8d\u30fb\u4fdd\u5b58"}</Btn>
+          <Btn small variant="primary" disabled={!saved||saving} onClick={onPrint}>📄 PDF生成</Btn>
           {saving&&<span style={{ fontSize:11, color:"#9ca3af", alignSelf:"center" }}>保存中...</span>}
           {!saving&&saved&&<span style={{ fontSize:11, color:"#16a34a", alignSelf:"center" }}>✓ 保存済</span>}
         </div>
@@ -370,51 +381,16 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
           setLoading(false);
           return;
         }
-        const prepared = normalizeReceiptForSave(parsed);
+        const prepared = {...normalizeReceiptForSave(parsed),stockManaged:parsed.docType==="\u7d0d\u54c1\u66f8"};
         const msgId = tid();
-        setDocStates(s=>({...s,[msgId]:{ doc:prepared, saved:false, saving:true }}));
-        setMsgs(m=>[...m,{ id:msgId, role:"assistant", text:(prepared.docType||"納品書")+"を作成しました。自動保存中...", doc:prepared }]);
-        try {
-          const saved = await db.saveDocument(prepared, user);
-          if (saved._duplicate) {
-            // 重複検知: 出庫処理(autoRegisterAndStock)はスキップし在庫の二重減算を防ぐ。既存書類を表示
-            setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
-            setDocStates(s=>({...s,[msgId]:{ doc:saved, saved:true, saving:false }}));
-            setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:"⚠️ 同じ内容の"+(saved.docType||"書類")+"が既に作成済みです（"+saved.docNo+"）。重複作成を防ぎました。", doc:saved} : msg));
-          } else {
-          const result = await autoRegisterAndStock({...saved}, user);
-          if (result.newCustomer || result.newProducts.length > 0) {
-            const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
-            setProducts(prods); setCustomers(custs);
-          } else if (result.stockLogs.length > 0) {
-            setProducts(await db.getProducts());
-          }
-          setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
-          setDocStates(s=>({...s,[msgId]:{ doc:saved, saved:true, saving:false }}));
-          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:(saved.docType||"納品書")+"を自動保存しました ✓", doc:saved} : msg));
-          const autoMsgs = [];
-          if (result.newCustomer) autoMsgs.push(`顧客「${result.newCustomer}」を登録`);
-          if (result.newProducts.length>0) autoMsgs.push(`商品「${result.newProducts.join("・")}」を登録`);
-          if (result.stockLogs.length>0) autoMsgs.push("出庫: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
-          if (autoMsgs.length>0) setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:"📋 " + autoMsgs.join("\n📋 ") }]);
-          const noOriginItems = (saved.items||[]).filter(it=>it.name&&!it.origin);
-          if (noOriginItems.length>0) {
-            const names = noOriginItems.map(it=>it.name).join("・");
-            setMsgs(m=>[...m,{ id:tid(), role:"assistant",
-              text:`📍 「${names}」の産地が未設定です。国産ですか？\n（「国産」「韓国産」「中国産」など返信してください）`,
-              pendingOrigin:{ docId:saved.id, items:noOriginItems.map(it=>it.name) } }]);
-          }
-          }
-        } catch(saveErr) {
-          setDocStates(s=>({...s,[msgId]:{ doc:prepared, saved:false, saving:false }}));
-          const failText = saveErr._duplicate ? "⚠️ " + saveErr.message : (prepared.docType||"納品書")+"を作成しました（保存エラー: "+saveErr.message+"）";
-          setMsgs(m=>m.map(msg=>msg.id===msgId ? {...msg, text:failText} : msg));
-        }
+        setDocStates(s=>({...s,[msgId]:{doc:prepared,saved:false,saving:false}}));
+        setMsgs(m=>[...m,{id:msgId,role:"assistant",text:"\u8349\u7a3f\u3092\u4f5c\u6210\u3057\u307e\u3057\u305f\u3002\u300c\u5185\u5bb9\u78ba\u8a8d\u30fb\u4fdd\u5b58\u300d\u3067\u78ba\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044\u3002\u307e\u3060\u5728\u5eab\u306f\u52d5\u304b\u3057\u3066\u3044\u307e\u305b\u3093\u3002",doc:prepared}]);
+
         }
         }
       } else {
         const lastPending = [...msgs].reverse().find(m=>m.pendingOrigin);
-        if (lastPending && (text.includes("産") || text.includes("国") || /^[ぁ-ん一-龯a-zA-Z]{1,10}$/.test(text.trim()))) {
+        if (lastPending && /^(?:\u56fd\u7523|.{1,24}\u7523)$/.test(text.trim())) {
           const origin = text.trim();
           const { docId, items: itemNames } = lastPending.pendingOrigin;
           const targetDoc = history.find(h=>h.id===docId);
@@ -433,11 +409,7 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
               return newS;
             });
             setMsgs(m=>m.map(msg=>msg.doc?.id===docId ? {...msg, doc:updated} : msg));
-            for (const name of itemNames) {
-              const { data:prod } = await supabase.from("products").select("id").eq("name",name).maybeSingle();
-              if (prod) await supabase.from("products").update({origin}).eq("id",prod.id);
-            }
-            setProducts(await db.getProducts());
+            setMsgs(m=>m.map(msg=>msg.pendingOrigin?.docId===docId?{...msg,pendingOrigin:null}:msg));
             setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:`✅ 「${itemNames.join("・")}」の産地を「${origin}」に設定しました。納品書のPDFを再生成してください。` }]);
           }
         } else {
@@ -456,9 +428,9 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
     const validationError = validateDocument(prepared);
     if (validationError) { alert(validationError); return; }
     try {
-      const saved = prepared.id ? await db.updateDocument(prepared.id, prepared) : prepared;
+      const saved = prepared.id ? await db.updateDocument(prepared.id, prepared) : await db.saveDocument(prepared,user);
       if (saved.id) {
-        setHistory(h=>h.map(x=>x.id===saved.id?saved:x));
+        setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
         setProducts(await db.getProducts());
       }
       setDocStates(s=>({...s,[editTarget.msgId]:{ ...s[editTarget.msgId], doc:saved, saved:Boolean(saved.id), saving:false }}));
@@ -511,7 +483,11 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
   </div>;
 }
 
-function HistoryView({ history, setHistory, co, products, setProducts, user }) {
+function HistoryView({ history, setHistory, co, products, setProducts, user, initialStatus="active" }) {
+  const [voidTarget,setVoidTarget]=useState(null);
+  const [batchBusy,setBatchBusy]=useState(false);
+  const batchLock=useRef(false);
+  const [statusFilter,setStatusFilter]=useState(initialStatus);
   const [sel, setSel] = useState(null);
   const [q, setQ] = useState("");
   const [editTarget, setEditTarget] = useState(null);
@@ -524,13 +500,14 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
   const [bulkDownloading, setBulkDownloading] = useState(false);
 
   const filt = (history||[]).filter(h=>
+    (statusFilter==="all"||(statusFilter==="active"&&!h.voidedAt&&!h.convertedTo)||(statusFilter==="billable"&&isBillable(h))||(statusFilter==="review"&&!h.voidedAt&&h.stockManaged==null))&&
     (typeFilter==="全て"||h.docType===typeFilter)&&
     (!q||h.customer?.includes(q)||h.docNo?.includes(q)||h.subject?.includes(q))
   );
   const tc = (t) => t==="請求書"?"#1d4ed8":t==="領収書"?"#7c3aed":t==="見積書"?"#d97706":"#047857";
   const totalToday = (history||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
-  const checkedList = filt.filter(h=>checked[h.id] && h.docType==="納品書");
-  const bulkDocs = (history||[]).filter(h=>h.docType==="請求書"||h.docType==="領収書");
+  const checkedList = filt.filter(h=>checked[h.id] && isBillable(h));
+  const bulkDocs = filt.filter(h=>!h.voidedAt&&(h.docType==="請求書"||h.docType==="領収書"));
   const checkedCustomers = [...new Set(checkedList.map(h=>h.customer))];
   const toggleCheck = (id, e) => { e.stopPropagation(); setChecked(c=>({...c,[id]:!c[id]})); };
   const clearCheck = () => setChecked({});
@@ -548,7 +525,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
   };
 
   const batchToInvoice = async () => {
-    if (checkedList.length===0) return;
+    if (checkedList.length===0||batchLock.current) return;
     if (checkedList.some(d=>d.docType!=="納品書")) { alert("納品書だけを選択してください"); return; }
     if (checkedCustomers.length>1) { alert("同じ取引先の納品書のみ選択してください"); return; }
     const customer = checkedCustomers[0];
@@ -561,8 +538,9 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
     const validationError = validateDocument(inv);
     if (validationError) { alert(validationError); return; }
     try {
-      const saved = await db.saveDocument(inv, user||{id:"batch",email:"batch"});
-      setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
+      batchLock.current=true;setBatchBusy(true);
+      const saved = await db.invoiceDeliveryNotes(checkedList.map(d=>d.id),inv);
+      setHistory(await db.getDocuments());
       clearCheck(); setBatchMode(false); setBatchModal(false);
       if (saved._duplicate) {
         alert("⚠️ 同じ内容の請求書が既にあります（"+saved.docNo+"）。重複作成を防ぎました。");
@@ -570,43 +548,30 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
         alert("請求書を発行しました: " + saved.docNo + "\n取引先: " + customer + "\n品目数: " + String(allItems.length));
         generateAndDownloadPDF(saved, co);
       }
-    } catch(e) { alert((e._duplicate ? "⚠️ " : "エラー: ") + e.message); }
+    } catch(e) { alert(e.message); } finally {batchLock.current=false;setBatchBusy(false);}
   };
 
-  const convertDoc = async (fromDoc, toType) => {
+  const asDraft = (src,type=src.docType) => ({...src,docType:type,id:undefined,docNo:undefined,
+    updatedAt:undefined,date:tod(),voidedAt:null,convertedTo:null,sourceIds:[],taxSummary:null,
+    stockManaged:type==="\u7d0d\u54c1\u66f8",items:(src.items||[]).map(({sourceDocumentId,sourceDocNo,...it})=>({...it,date:tod()}))});
+  const convertDoc = async (fromDoc,toType) => {
     try {
-      const items = (fromDoc.items||[]).map(it=>({...it, date:it.date||fromDoc.date}));
-      const doc = { ...fromDoc, docType:toType, docNo:undefined, id:undefined, items };
-      const saved = await db.saveDocument(doc, user);
-      setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
-      if (!saved._duplicate && fromDoc.docType === "見積書" && (toType === "納品書" || toType === "請求書")) {
-        await autoRegisterAndStock({ ...saved }, user);
-        setProducts(await db.getProducts());
-      }
-      setSel(null);
-      alert(saved._duplicate
-        ? "⚠️ 同じ内容の"+toType+"が既にあります（"+saved.docNo+"）。重複作成を防ぎました。"
-        : toType+"に変換しました: " + saved.docNo);
-    } catch(e) { alert((e._duplicate ? "⚠️ " : "エラー: ") + e.message); }
+      if(fromDoc.docType==="\u7d0d\u54c1\u66f8"&&toType==="\u8acb\u6c42\u66f8") {
+        const saved=await db.invoiceDeliveryNotes([fromDoc.id],{date:tod(),bank:co.bankA||""});
+        setHistory(await db.getDocuments());setSel(saved);
+      } else {setEditTarget(asDraft(fromDoc,toType));setSel(null);}
+    } catch(e){alert(e.message);}
   };
-
-  // 同じ書類を当日日付でコピー作成（明示操作なので重複チェックはスキップ）
-  const copyDoc = async (src) => {
-    try {
-      const items = (src.items||[]).map(it=>({...it, date:tod()}));
-      const doc = { ...src, id:undefined, docNo:undefined, date:tod(), items };
-      const saved = await db.saveDocument(doc, user||{id:"copy",email:"system"}, { allowDuplicate:true });
-      setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
-      setSel(null);
-      alert("コピーを作成しました: " + saved.docNo + "（" + src.docType + "・日付 " + tod() + "）");
-    } catch(e) { alert(e._duplicate ? "⚠️ 同じ内容の書類が本日分で既にあります。" : "エラー: " + e.message); }
-  };
+  const copyDoc = src => {setEditTarget(asDraft(src));setSel(null);};
 
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
     <div style={{ padding:"10px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
       <input style={{ ...INP, flex:1, minWidth:120 }} placeholder="取引先・書類番号で検索..." value={q} onChange={e=>setQ(e.target.value)}/>
       <select style={{ ...SEL, width:90 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
         <option>全て</option><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option>
+      </select>
+      <select aria-label="\u72b6\u614b" style={{...SEL,width:145}} value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);clearCheck();}}>
+        <option value="active">{'\u6709\u52b9\u306a\u66f8\u985e'}</option><option value="billable">{'\u672a\u8acb\u6c42\u306e\u7d0d\u54c1\u66f8'}</option><option value="review">{'\u5728\u5eab\u8981\u78ba\u8a8d'}</option><option value="all">{'\u53d6\u6d88\u30fb\u5909\u63db\u6e08\u307f\u3092\u542b\u3080'}</option>
       </select>
       <Btn small variant={batchMode?"primary":"ghost"} onClick={()=>{ setBatchMode(b=>!b); clearCheck(); }}>
         {batchMode?"✅ 選択中":"☑ 複数選択"}
@@ -633,10 +598,10 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
         const isChecked = !!checked[h.id];
         return <div key={h.id} onClick={()=>batchMode?null:setSel(h)}
           style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 18px", borderBottom:"1px solid #f9f9f9", cursor:batchMode?"default":"pointer", background:isChecked?"#eff6ff":sel?.id===h.id?"#f9fafb":"transparent" }}>
-          {batchMode&&<input type="checkbox" checked={isChecked} disabled={h.docType!=="納品書"} onChange={e=>toggleCheck(h.id,e)} style={{ width:16, height:16, cursor:h.docType==="納品書"?"pointer":"not-allowed", flexShrink:0 }}/>}
+          {batchMode&&<input type="checkbox" checked={isChecked} disabled={!isBillable(h)} onChange={e=>toggleCheck(h.id,e)} style={{ width:16, height:16, cursor:h.docType==="納品書"?"pointer":"not-allowed", flexShrink:0 }}/>}
           <span style={{ background:tc(h.docType), color:"#fff", fontSize:11, padding:"2px 6px", borderRadius:3, whiteSpace:"nowrap" }}>{h.docType}</span>
           <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontWeight:500, fontSize:13 }}>{h.customer}</div>
+            <div style={{ fontWeight:500, fontSize:13 }}>{h.customer} <span style={{fontSize:10,color:h.voidedAt?"#b91c1c":"#64748b",fontWeight:400}}>{documentStatus(h)}</span></div>
             <div style={{ fontSize:11, color:"#9ca3af" }}>{h.docNo + " • " + h.date + (h.subject?" • "+h.subject:"")}</div>
           </div>
           <div style={{ textAlign:"right", flexShrink:0 }}>
@@ -656,48 +621,43 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
           </div>;
         })}
         <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", fontWeight:600, fontSize:14 }}>
-          <span>合計</span><span>{fm(checkedList.reduce((s,d)=>s+calcTax(d.items||[]).total,0)) + "円"}</span>
+          <span>合計（税率別に再計算）</span><span>{fm(calcTax(checkedList.flatMap(d=>d.items||[])).total) + "円"}</span>
         </div>
       </div>
       <Field label="支払期限"><input style={INP} type="date" value={batchDueDate} onChange={e=>setBatchDueDate(e.target.value)}/></Field>
       <Field label="振込先"><input style={INP} value={batchBank} onChange={e=>setBatchBank(e.target.value)}/></Field>
       <div style={{ display:"flex", gap:8, marginTop:14 }}>
         <Btn onClick={()=>setBatchModal(false)} style={{ flex:1 }}>キャンセル</Btn>
-        <Btn variant="primary" onClick={batchToInvoice} style={{ flex:1 }}>📄 請求書発行＋PDF生成</Btn>
+        <Btn variant="primary" disabled={batchBusy} onClick={batchToInvoice} style={{ flex:1 }}>📄 請求書発行＋PDF生成</Btn>
       </div>
     </Modal>}
     {sel&&<Modal title={sel.docType + " - " + sel.customer} onClose={()=>setSel(null)}>
       {[["書類番号",sel.docNo],["日付",sel.date],["入金期日",sel.dueDate],["件名",sel.subject],["作成者",sel.savedBy]].map(([l,v])=>v?<div key={l} style={{ display:"flex", gap:8, padding:"5px 0", borderBottom:"1px solid #f3f4f6", fontSize:13 }}><span style={{ color:"#6b7280", minWidth:80 }}>{l}</span><span>{v}</span></div>:null)}
+      <p style={{fontSize:12,color:'#64748b'}}>{documentStatus(sel)}{sel.voidReason ? ' / '+sel.voidReason : ''}</p>
+      {sel.sourceIds?.length>0&&<p style={{fontSize:12}}>{'\u5143\u306e\u7d0d\u54c1\u66f8: '}{sel.sourceIds.map(id=>history.find(d=>d.id===id)?.docNo||id).join(', ')}</p>}
       {validItems(sel.items).map((it,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0", borderBottom:"1px solid #f3f4f6" }}>
         <span>{(it.origin?it.origin+" ":"") + it.name + " × " + it.qty + it.unit}</span><span style={{ fontWeight:500 }}>{fm(it.amount) + "円"}</span>
       </div>)}
       {receiptAmountMismatch(sel)&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginTop:8 }}>⚠️ 明細合計と領収金額が不一致です。領収金額 ¥{fm(sel.amount)} を正とし、明細は参考扱いです。</div>}
       {(()=>{ const items=validItems(sel.items); const tx=calcTax(items); const total=totalFor(sel); return <div style={{ textAlign:"right", marginTop:8, fontSize:13 }}><div style={{ color:"#6b7280" }}>{items.length>0 ? "消費税: " + fm(tx.tax) + "円" : "領収金額"}</div><div style={{ fontWeight:600, fontSize:15 }}>{"合計: " + fm(total) + "円"}</div></div>; })()}
       <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
-        {(sel.docType==="見積書"||sel.docType==="納品書")&&<Btn variant="blue" onClick={()=>convertDoc(sel,"請求書")}>📄 請求書に変換</Btn>}
-        {sel.docType==="見積書"&&<Btn variant="ghost" onClick={()=>convertDoc(sel,"納品書")}>📋 納品書に変換</Btn>}
+        {!sel.voidedAt&&!sel.convertedTo&&(sel.docType==="見積書"||sel.docType==="納品書")&&<Btn variant="blue" onClick={()=>convertDoc(sel,"請求書")}>📄 請求書に変換</Btn>}
+        {!sel.voidedAt&&sel.docType==="見積書"&&<Btn variant="ghost" onClick={()=>convertDoc(sel,"納品書")}>📋 納品書に変換</Btn>}
         <Btn variant="green" onClick={()=>copyDoc(sel)}>📋 コピー作成（当日）</Btn>
-        <Btn variant="red" onClick={async()=>{
-          if (!confirm("削除しますか？\n※納品書・請求書の場合、在庫も自動で戻ります")) return;
-          try {
-            await db.deleteDocument(sel.id);
-            setHistory(h=>h.filter(x=>x.id!==sel.id));
-            setProducts(await db.getProducts());
-            setSel(null);
-          } catch(e) { alert("削除エラー: " + e.message); }
-        }}>🗑 削除</Btn>
-        <Btn onClick={()=>{ setEditTarget(sel); setSel(null); }}>✏️ 編集</Btn>
-        <Btn variant="primary" onClick={()=>generateAndDownloadPDF(sel,co)} style={{ flex:1 }}>📄 PDF</Btn>
+         <Btn variant="red" disabled={Boolean(sel.voidedAt||sel.convertedTo)} onClick={()=>{setVoidTarget(sel);setSel(null);}}>{'\u53d6\u6d88'}</Btn>
+        <Btn disabled={Boolean(sel.voidedAt||sel.convertedTo)} onClick={()=>{ setEditTarget(sel); setSel(null); }}>✏️ 編集</Btn>
+        <Btn variant="primary" disabled={Boolean(sel.voidedAt)} onClick={()=>generateAndDownloadPDF(sel,co)} style={{ flex:1 }}>📄 PDF</Btn>
       </div>
     </Modal>}
+    {voidTarget&&<VoidDocumentModal doc={voidTarget} onClose={()=>setVoidTarget(null)} onSubmit={async(reason,reverse)=>{await db.voidDocument(voidTarget.id,reason,reverse);setHistory(await db.getDocuments());setProducts(await db.getProducts());}}/>}
     {editTarget&&<DocEditModal doc={editTarget} co={co} products={products||[]} onClose={()=>setEditTarget(null)} onSave={async(nd)=>{
       const receiptItems = validItems(nd.items);
       const validationError = validateDocument({ ...nd, items: receiptItems });
       if (validationError) { alert(validationError); return; }
       const normalized = normalizeReceiptForSave({ ...nd, items:receiptItems });
       try {
-        const updated = await db.updateDocument(editTarget.id, normalized);
-        setHistory(h=>h.map(x=>x.id===editTarget.id?updated:x));
+        const updated = editTarget.id ? await db.updateDocument(editTarget.id, normalized) : await db.saveDocument(normalized,user);
+        setHistory(await db.getDocuments());
         setProducts(await db.getProducts());
         setEditTarget(null);
       } catch (e) { alert("編集保存エラー: " + e.message); }
@@ -705,24 +665,28 @@ function HistoryView({ history, setHistory, co, products, setProducts, user }) {
   </div>;
 }
 
-function ProductsView({ products, setProducts, user }) {
+function ProductsView({ products, setProducts, user, initialNegative=false }) {
   const [m, setM] = useState(null);
   const [f, setF] = useState({});
   const [logs, setLogs] = useState([]);
   const [logProduct, setLogProduct] = useState(null);
+  const [onlyNegative,setOnlyNegative]=useState(initialNegative);
   const [sortKey, setSortKey] = useState("code");
   const [sortDir, setSortDir] = useState(1);
   const [catFilter, setCatFilter] = useState("全て");
   const [cellFilter, setCellFilter] = useState(null);
   const [receiving, setReceiving] = useState({ qty:"", supplier:"", note:"" });
   const [adjustQty, setAdjustQty] = useState("");
+  const [adjustReason,setAdjustReason]=useState("");
+  const [stockBusy,setStockBusy]=useState(false);
+  const stockLock=useRef(false);
   const categories = [...new Set(products.map(p=>p.category).filter(Boolean))].sort();
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
   const updR = (k,v) => setReceiving(x=>({...x,[k]:v}));
   const selectCell = (key, value) => setCellFilter(prev => prev?.key === key && prev?.value === String(value ?? "") ? null : { key, value: String(value ?? "") });
   const filterableCell = (key, value, children, style={}) => <td title="クリックしてこの内容で絞り込み（再クリックで解除）" onClick={()=>selectCell(key,value)} style={{ padding:"6px 10px", cursor:"pointer", background:cellFilter?.key===key&&cellFilter?.value===String(value??"")?"#dbeafe":undefined, ...style }}>{children}</td>;
   const sort = (key) => { if(sortKey===key) setSortDir(d=>-d); else { setSortKey(key); setSortDir(1); } };
-  const filtered = products.filter(p => (catFilter==="全て" || p.category===catFilter) && (!cellFilter || String(p[cellFilter.key]??"")===cellFilter.value));
+  const filtered = products.filter(p => (!onlyNegative||Number(p.stock)<0) && (catFilter==="全て" || p.category===catFilter) && (!cellFilter || String(p[cellFilter.key]??"")===cellFilter.value));
   const sorted = [...filtered].sort((a,b)=>{
     const av=a[sortKey]||"", bv=b[sortKey]||"";
     if(!isNaN(Number(av))&&!isNaN(Number(bv))) return (Number(av)-Number(bv))*sortDir;
@@ -740,17 +704,11 @@ function ProductsView({ products, setProducts, user }) {
     try { await db.deleteProduct(id); setProducts(products.filter(p=>p.id!==id)); }
     catch(e) { alert("削除エラー: " + e.message); }
   };
-  const doMerge = async () => {
-    try {
-      if (!confirm("同名・同単位の商品を統合します。元の商品は削除されます。続けますか？")) return;
-      const count = await mergeDuplicateProducts();
-      setProducts(await db.getProducts());
-      alert(count > 0 ? count + "件の重複商品をマージしました" : "重複はありませんでした");
-    } catch (e) { alert("重複マージエラー: " + e.message); }
-  };
   const doReceive = async () => {
+    if(stockLock.current)return;
     if (!logProduct || !receiving.qty) { alert("数量を入力してください"); return; }
     try {
+      stockLock.current=true;setStockBusy(true);
       const newStock = await receiveStock(logProduct.id, logProduct.name, Number(receiving.qty), receiving.supplier, receiving.note, user?.id);
       const prods = await db.getProducts(); setProducts(prods);
       const updated = prods.find(p=>p.id===logProduct.id);
@@ -758,7 +716,7 @@ function ProductsView({ products, setProducts, user }) {
       setLogs(await getStockLogs(logProduct.id));
       setReceiving({ qty:"", supplier:"", note:"" });
       alert("入庫完了。現在庫: " + newStock + " " + logProduct.unit);
-    } catch(e) { alert("入庫エラー: " + e.message); }
+    } catch(e) { alert("入庫エラー: " + e.message); } finally {stockLock.current=false;setStockBusy(false);}
   };
   const SortTh = ({k, label}) => <th onClick={()=>sort(k)} style={{ padding:"7px 10px", fontWeight:400, textAlign:"left", cursor:"pointer", whiteSpace:"nowrap", userSelect:"none" }}>
     {label + (sortKey===k?(sortDir===1?"▲":"▼"):"")}
@@ -773,10 +731,10 @@ function ProductsView({ products, setProducts, user }) {
       <span style={{ fontSize:11, color:"#9ca3af" }}>▲▼ヘッダーで並び替え・内容をクリックで絞り込み（{filtered.length}件表示）</span>
       {(cellFilter || catFilter!=="全て") && <Btn small onClick={()=>{setCellFilter(null);setCatFilter("全て");}}>✕ フィルタ解除{cellFilter ? `（${({code:"コード",category:"分類",name:"商品名",origin:"産地",unit:"単位",taxRate:"税率"})[cellFilter.key] || cellFilter.key}: ${cellFilter.value}）` : ""}</Btn>}
       <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
-        <Btn small onClick={doMerge} style={{ background:"#f59e0b", color:"#fff", border:"none" }}>🔀 重複マージ</Btn>
         <Btn variant="primary" small onClick={()=>open(null)}>＋ 新規登録</Btn>
       </div>
     </div>
+    <label style={{fontSize:12,display:"block",padding:8}}><input type="checkbox" checked={onlyNegative} onChange={e=>setOnlyNegative(e.target.checked)}/>{"\u30de\u30a4\u30ca\u30b9\u5728\u5eab\u306e\u307f"}</label>
     <div style={{ flex:1, overflowX:"auto", overflowY:"auto" }}>
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
         <thead><tr style={{ background:N, color:"#fff" }}>
@@ -832,7 +790,7 @@ function ProductsView({ products, setProducts, user }) {
           <Field label="仕入先"><input style={INP} value={receiving.supplier} onChange={e=>updR("supplier",e.target.value)} placeholder="〇〇水産"/></Field>
         </div>
         <Field label="備考"><input style={INP} value={receiving.note} onChange={e=>updR("note",e.target.value)} placeholder="任意"/></Field>
-        <Btn variant="green" onClick={doReceive} style={{ marginTop:8 }}>✅ 入庫確定</Btn>
+        <Btn variant="green" disabled={stockBusy} onClick={doReceive} style={{ marginTop:8 }}>✅ 入庫確定</Btn>
       </div>
       <div style={{ fontWeight:500, fontSize:12, color:"#6b7280", marginBottom:6 }}>入出庫履歴</div>
       <div style={{ maxHeight:260, overflowY:"auto", border:"1px solid #f0f0f0", borderRadius:6 }}>
@@ -848,18 +806,20 @@ function ProductsView({ products, setProducts, user }) {
       <div style={{ marginTop:10 }}>
         <Field label="手動調整（±数量）">
           <div style={{ display:"flex", gap:8 }}>
+            <input aria-label="\u8abf\u6574\u7406\u7531" style={{...INP,flex:1}} value={adjustReason} onChange={e=>setAdjustReason(e.target.value)} placeholder="\u8abf\u6574\u7406\u7531\uff08\u5fc5\u9808\uff09"/>
             <input id="adj-qty" type="number" value={adjustQty} onChange={e=>setAdjustQty(e.target.value)} placeholder="例: -5 または +10" style={{ ...INP, flex:1 }}/>
             <Btn small variant="primary" onClick={async()=>{
               const v = Number(adjustQty);
               if (!v) { alert("調整数量を入力してください"); return; }
               try {
-                await db.updateStock(logProduct.id, v);
+                if(stockLock.current)return;stockLock.current=true;setStockBusy(true);
+                 await db.updateStock(logProduct.id, v,adjustReason);
                 const prods = await db.getProducts(); setProducts(prods);
                 const updated = prods.find(p=>p.id===logProduct.id);
                 if(updated) setLogProduct(updated);
                 setLogs(await getStockLogs(logProduct.id));
-                setAdjustQty("");
-              } catch (e) { alert("在庫調整エラー: " + e.message); }
+                setAdjustQty("");setAdjustReason("");
+              } catch (e) { alert("在庫調整エラー: " + e.message); } finally{stockLock.current=false;setStockBusy(false);}
             }}>調整</Btn>
           </div>
         </Field>
@@ -1044,7 +1004,10 @@ export default function App() {
   const [co, setCo] = useState(DEFAULT_CO);
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
-  const [tab, setTab] = useState("chat");
+  const [tab, setTab] = useState("home");
+  const [masterTab,setMasterTab]=useState("customers");
+  const [routeFilter,setRouteFilter]=useState("");
+  const [loadError,setLoadError]=useState("");
   const [sideOpen, setSideOpen] = useState(window.innerWidth > 600);
 
   useEffect(()=>{
@@ -1062,7 +1025,7 @@ export default function App() {
         if (company) setCo({...DEFAULT_CO,...company});
         setProducts(prods||[]);
         setCustomers(custs||[]);
-      } catch(e) { console.error(e); }
+      } catch(e) { setLoadError(e.message); }
     })();
   }, [session]);
 
@@ -1078,9 +1041,9 @@ export default function App() {
     : <div style={{ width:28, height:28, borderRadius:"50%", background:"rgba(37,99,235,0.5)", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:12, fontWeight:600 }}>{name.charAt(0)}</div>;
 
   const todayCount = (history||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
-  const TABS = [["chat","💬","書類作成"],["history","📋","発行履歴"],["products","📦","商品マスター"],["customers","👥","顧客マスター"],["settings","⚙️","設定"]];
+  const TABS = [["home","\u2302","\u4eca\u65e5\u306e\u696d\u52d9"],["chat","\u270e","\u8ca9\u58f2"],["history","\u2261","\u8acb\u6c42\u30fb\u767a\u884c\u5c65\u6b74"],["products","\u25a6","\u5728\u5eab\u30fb\u5546\u54c1"],["masters","\u2699","\u30de\u30b9\u30bf\u30fc\u30fb\u8a2d\u5b9a"]];
 
-  return <div style={{ display:"flex", height:"100vh", fontFamily:'"Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif', background:"#f9fafb" }}>
+  return <div style={{ display:"flex", height:"100vh", fontFamily:'"Hiragino Sans","Yu Gothic UI","Meiryo","Noto Sans CJK JP",sans-serif', background:"#f9fafb" }}>
     <aside style={{ width:sideOpen?190:50, background:N, display:"flex", flexDirection:"column", flexShrink:0, transition:"width .18s", overflow:"hidden" }}>
       <div style={{ padding:"12px 10px", borderBottom:"0.5px solid rgba(255,255,255,0.1)", minWidth:190 }}>
         {sideOpen&&<div>
@@ -1099,7 +1062,7 @@ export default function App() {
         </div>
       </div>}
       <nav style={{ flex:1, padding:"5px 0", overflowY:"auto" }}>
-        {TABS.map(([id,icon,label])=><button key={id} onClick={()=>setTab(id)} style={{ display:"flex", alignItems:"center", gap:10, width:"100%", padding:"10px 11px", border:"none", cursor:"pointer", fontSize:12, background:tab===id?"rgba(255,255,255,0.12)":"transparent", color:tab===id?"#fff":"rgba(255,255,255,0.5)", borderLeft:tab===id?"3px solid #60a5fa":"3px solid transparent", textAlign:"left", fontFamily:"inherit", position:"relative" }}>
+        {TABS.map(([id,icon,label])=><button key={id} onClick={()=>{setRouteFilter("");setTab(id);}} style={{ display:"flex", alignItems:"center", gap:10, width:"100%", padding:"10px 11px", border:"none", cursor:"pointer", fontSize:12, background:tab===id?"rgba(255,255,255,0.12)":"transparent", color:tab===id?"#fff":"rgba(255,255,255,0.5)", borderLeft:tab===id?"3px solid #60a5fa":"3px solid transparent", textAlign:"left", fontFamily:"inherit", position:"relative" }}>
           <span style={{ fontSize:15, flexShrink:0 }}>{icon}</span>
           {sideOpen&&<span style={{ whiteSpace:"nowrap" }}>{label}</span>}
           {id==="history"&&todayCount>0&&<span style={{ position:"absolute", top:8, right:8, background:"#dc2626", color:"#fff", borderRadius:10, fontSize:10, padding:"1px 5px" }}>{todayCount}</span>}
@@ -1118,6 +1081,8 @@ export default function App() {
       <div style={{ padding:"10px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", alignItems:"center", gap:8 }}>
         <button onClick={()=>setSideOpen(x=>!x)} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af", fontSize:18, padding:4, flexShrink:0 }}>☰</button>
         <h2 style={{ fontSize:14, fontWeight:500 }}>
+          {tab==="home"&&"\u4eca\u65e5\u306e\u696d\u52d9"}
+          {tab==="masters"&&"\u30de\u30b9\u30bf\u30fc\u30fb\u8a2d\u5b9a"}
           {tab==="chat"&&"💬 書類作成（AI + 直接入力）"}
           {tab==="history"&&("📋 発行履歴（計" + (history||[]).length + "件）")}
           {tab==="products"&&"📦 商品マスター"}
@@ -1125,10 +1090,14 @@ export default function App() {
           {tab==="settings"&&"⚙️ 設定"}
         </h2>
       </div>
+      {loadError&&<div role="alert" style={{padding:14,background:'#fef2f2',color:'#b91c1c'}}>{'\u30c7\u30fc\u30bf\u53d6\u5f97\u5931\u6557: '}{loadError} <button onClick={()=>window.location.reload()}>{'\u518d\u8aad\u8fbc'}</button></div>}
       <div style={{ flex:1, overflow:"hidden" }}>
+        {tab==="home"&&<HomeDashboard history={history} products={products} onNavigate={(tab,filter="")=>{setRouteFilter(filter);setTab(tab);}}/>}
+        {tab==="masters"&&<div style={{display:'flex',flexDirection:'column',height:'100%'}}><div style={{padding:10,display:'flex',gap:8}}><Btn onClick={()=>setMasterTab('customers')}>{'\u9867\u5ba2\u30de\u30b9\u30bf\u30fc'}</Btn><Btn onClick={()=>setMasterTab('settings')}>{'\u4f1a\u793e\u30fb\u8a2d\u5b9a'}</Btn></div><div style={{flex:1,overflow:'auto'}}>{masterTab==='customers'?<CustomersView customers={customers} setCustomers={setCustomers}/>:<SettingsView co={co} setCo={setCo}/>}</div></div>}
+
         {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
-        {tab==="history"&&<HistoryView history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} user={user}/>}
-        {tab==="products"&&<ProductsView products={products} setProducts={setProducts} user={user}/>}
+        {tab==="history"&&<HistoryView initialStatus={routeFilter||"active"} history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} user={user}/>}
+        {tab==="products"&&<ProductsView initialNegative={routeFilter==="negative"} products={products} setProducts={setProducts} user={user}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}
       </div>

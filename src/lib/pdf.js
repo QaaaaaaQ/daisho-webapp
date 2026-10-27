@@ -14,22 +14,8 @@ const esc = (value) => String(value == null ? "" : value)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
 
-export function calcTax(items) {
-  items = items || [];
-  let s8 = 0, s10 = 0, gross8 = 0, gross10 = 0;
-  items.forEach(function(i) {
-    const a = Number(i.amount || 0);
-    const rate = Number(i.taxRate) === 10 ? 10 : 8;
-    const excl = i.taxIncluded ? (rate === 8 ? Math.round(a/1.08) : Math.round(a/1.10)) : a;
-    if (rate === 10) s10 += excl; else s8 += excl;
-    if (rate === 10) gross10 += i.taxIncluded ? a : excl + Math.round(excl * 0.10);
-    else gross8 += i.taxIncluded ? a : excl + Math.round(excl * 0.08);
-  });
-  const t8 = Math.round(s8*0.08), t10 = Math.round(s10*0.10);
-  const sub = s8+s10, tax = t8+t10;
-  const total = gross8 + gross10;
-  return {s8,s10,t8,t10,sub,tax,total,gross8,gross10};
-}
+export { calcTax } from "./money.js";
+import { calcTax, receiptTax, documentTax } from "./money.js";
 
 // ── 右上ブロック: メタ情報 + ロゴ(2倍) + 社名(角印背景) ──────
 function coBlock(co, date, no, typeLabel) {
@@ -204,7 +190,7 @@ function buildDocumentHTML(doc, co) {
 
 // ─── 納品書 ────────────────────────────────────────────────────
 export function buildDeliveryHTML(doc, co) {
-  const tx = calcTax(doc.items);
+  const tx = documentTax(doc);
   const no   = doc.docNo || "DEL-" + Date.now();
   const date = fd(doc.date) || fd(new Date());
   // 入金期日（あれば）
@@ -233,7 +219,7 @@ export function buildDeliveryHTML(doc, co) {
 
 // ─── 請求書 ────────────────────────────────────────────────────
 export function buildInvoiceHTML(doc, co) {
-  const tx   = calcTax(doc.items);
+  const tx   = documentTax(doc);
   const no   = doc.docNo || "INV-" + Date.now();
   const date = fd(doc.date) || fd(new Date());
   const bank = esc(doc.bank || co.bankA || "").split(/　|  |\s{2}/).join("<br>");
@@ -263,7 +249,7 @@ export function buildInvoiceHTML(doc, co) {
 
 // ─── 見積書 ────────────────────────────────────────────────────
 export function buildEstimateHTML(doc, co) {
-  var tx   = calcTax(doc.items);
+  var tx   = documentTax(doc);
   var no   = doc.docNo || "EST-" + Date.now();
   var date = fd(doc.date) || fd(new Date());
   var expiryRow = doc.expiryDate
@@ -298,7 +284,7 @@ export function buildReceiptHTML(doc, co) {
   const manualAmount = Number(doc.amount || 0);
   const amt  = manualAmount > 0 ? manualAmount : itemTx.total;
   const detailsMatchAmount = items.length > 0 && Math.abs(amt - itemTx.total) < 0.01;
-  const tax  = detailsMatchAmount ? itemTx.tax : Math.round(amt - amt/1.08);
+  const tax  = receiptTax(doc);
   const no   = doc.docNo || "REC-" + Date.now();
   const date = fd(doc.date) || fd(new Date());
   const description = doc.description || doc.subject || "商品代として";
@@ -314,7 +300,7 @@ export function buildReceiptHTML(doc, co) {
     '<div style="border:2px solid #1a2744;border-radius:4px;padding:5mm;text-align:center;margin:5mm 0">' +
       '<div style="font-size:9pt;color:#555;margin-bottom:2mm">領　収　金　額</div>' +
       '<div style="font-size:22pt;font-weight:bold">¥' + fm(amt) + ' -</div>' +
-      '<div style="font-size:8pt;color:#555;margin-top:2mm">（うち消費税等 ¥' + fm(tax) + '）</div>' +
+      '<div style="font-size:8pt;color:#555;margin-top:2mm">' + (tax == null ? '税額未記載（明細の税率・金額を確認）' : '（うち消費税等 ¥' + fm(tax) + '）') + '</div>' +
     '</div>' +
     details +
     (detailsMatchAmount ? '<div style="font-size:9pt;margin:3mm 0">但し　' + esc(description) + '</div>' : '') +
@@ -661,14 +647,14 @@ function drawReceiptAmount(pdf, amount, tax, y) {
   pdf.text("¥" + fm(amount) + " -", 105, y + 19, { align: "center" });
   pdfFont(pdf, 7.5);
   pdf.setTextColor.apply(pdf, PDF_COLORS.muted);
-  pdf.text("（うち消費税等 ¥" + fm(tax) + "）", 105, y + 25, { align: "center" });
+  pdf.text(tax == null ? "税額未記載（明細の税率・金額を確認）" : "（うち消費税等 ¥" + fm(tax) + "）", 105, y + 25, { align: "center" });
   return y + 35;
 }
 
 function drawDocumentVector(pdf, doc, co) {
   var header = drawHeader(pdf, doc, co || {});
   var y = header.y;
-  var tx = calcTax(doc.items || []);
+  var tx = documentTax(doc);
   if (doc.docType === "請求書") y = drawAmountLine(pdf, "請求金額", tx.total, y);
   if (doc.docType === "見積書") y = drawAmountLine(pdf, "お見積金額", tx.total, y);
   if (doc.docType === "領収書") {
@@ -677,8 +663,8 @@ function drawDocumentVector(pdf, doc, co) {
     var manualAmount = Number(doc.amount || 0);
     var receiptAmount = manualAmount > 0 ? manualAmount : receiptTx.total;
     var receiptDetailsMatch = receiptItems.length > 0 && Math.abs(receiptAmount - receiptTx.total) < 0.01;
-    var receiptTax = receiptDetailsMatch ? receiptTx.tax : Math.round(receiptAmount - receiptAmount / 1.08);
-    y = drawReceiptAmount(pdf, receiptAmount, receiptTax, y);
+    var receiptTaxAmount = receiptTax(doc);
+    y = drawReceiptAmount(pdf, receiptAmount, receiptTaxAmount, y);
     if (!receiptDetailsMatch) {
       y = drawBoxText(pdf, "但し書き", doc.description || doc.subject || "商品代として", y, 18);
       pdfFont(pdf, 9);
