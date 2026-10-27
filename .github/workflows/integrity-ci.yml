@@ -1,0 +1,35 @@
+name: Integrity checks
+on:
+  push:
+    branches: [fix/20261027-sales-stock-integrity]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Unit tests
+        run: npm test
+      - name: Production build check
+        env:
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_ANON_KEY: ci-placeholder-not-a-secret
+        run: npm run build
+      - name: Prepare isolated source test workspace
+        if: github.event_name == 'push' && github.ref == 'refs/heads/fix/20261027-sales-stock-integrity'
+        run: tar --exclude=.git --exclude='.env*' --exclude=dist --exclude=.vercel -czf /tmp/daisho-test-workspace.tar.gz .
+      - name: Export test workspace
+        if: github.event_name == 'push' && github.ref == 'refs/heads/fix/20261027-sales-stock-integrity'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: daisho-test-workspace
+          path: /tmp/daisho-test-workspace.tar.gz
+          retention-days: 1
