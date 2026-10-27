@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   publish:
-    if: github.repository == 'QaaaaaaQ/daisho-webapp' && github.ref == 'refs/heads/fix/20261027-sales-stock-integrity' && github.event.head_commit.message == 'chore: deliver verified integrity source'
+    if: github.repository == 'QaaaaaaQ/daisho-webapp' && github.ref == 'refs/heads/fix/20261027-sales-stock-integrity'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
