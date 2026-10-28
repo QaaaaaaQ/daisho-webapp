@@ -28,9 +28,33 @@ test('receipt tax is 100 for known 10 percent and unknown for amount-only receip
  assert.equal(receiptTax({amount:1100,items:[]}),null);
  assert.equal(receiptTax({amount:1200,items:[row(1100,10,true)]}),null);
 });
+// Tax assertions target the rendered tax notice, never arbitrary digits in
+// the entire HTML: receipt IDs, dates and contact details may contain "81".
+function assertUnknownReceiptTax(html) {
+ assert.match(html, />\u7a0e\u984d\u672a\u8a18\u8f09\uff08\u660e\u7d30\u306e\u7a0e\u7387\u30fb\u91d1\u984d\u3092\u78ba\u8a8d\uff09<\/div>/u);
+ assert.doesNotMatch(html, /\u3046\u3061\u6d88\u8cbb\u7a0e\u7b49\s*\u00a5/u);
+}
 test('HTML receipt renders unknown tax notice, not guessed 81 yen',()=>{
+ const html=buildReceiptHTML({docType:REC,docNo:'REC-TEST-000001',customer:'Test',date:'2026-10-28',amount:1100,items:[]},{});
+ assertUnknownReceiptTax(html);
+});
+test('receipt fallback timestamp containing 81 does not imply a guessed tax',(t)=>{
+ t.mock.method(Date,'now',()=>1793181000000);
  const html=buildReceiptHTML({docType:REC,customer:'Test',date:'2026-10-28',amount:1100,items:[]},{});
- assert.ok(html.includes('\u7a0e\u984d\u672a\u8a18\u8f09'));assert.ok(!html.includes('81'));
+ assert.match(html,/REC-1793181000000/);
+ assertUnknownReceiptTax(html);
+});
+test('receipt number and contact details containing 81 do not affect tax notice',()=>{
+ const html=buildReceiptHTML({docType:REC,docNo:'REC-81-000001',customer:'Customer 81',date:'2026-10-28',amount:1100,items:[]},{tel:'TEL:+81-00-0000-0000'});
+ assert.match(html,/REC-81-000001/);
+ assert.match(html,/TEL:\+81-00-0000-0000/);
+ assertUnknownReceiptTax(html);
+});
+test('HTML receipt with matching 10 percent details displays the actual tax',()=>{
+ const html=buildReceiptHTML({docType:REC,docNo:'REC-81-000002',customer:'Test',date:'2026-10-28',amount:1100,items:[row(1100,10,true)]},{});
+ assert.match(html,/\uff08\u3046\u3061\u6d88\u8cbb\u7a0e\u7b49\s*\u00a5100\uff09/u);
+ assert.doesNotMatch(html,/\u7a0e\u984d\u672a\u8a18\u8f09/u);
+ assert.doesNotMatch(html,/\u3046\u3061\u6d88\u8cbb\u7a0e\u7b49\s*\u00a581(?:\D|$)/u);
 });
 test('HTML escapes customer, product and description text',()=>{
  const html=buildReceiptHTML({docType:REC,customer:'<script>bad()</script>',description:'<img onerror=x>',amount:1100,items:[]},{});

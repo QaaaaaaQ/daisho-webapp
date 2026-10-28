@@ -1,3 +1,5 @@
+import HistoryErrorBoundary from "./components/HistoryErrorBoundary.jsx";
+import { historyDocumentView } from "./lib/history-display.js";
 import { HomeDashboard, ShipmentChoice, VoidDocumentModal } from "./components/WorkflowPanels.jsx";
 import { isBillable, documentStatus } from "./lib/workflow-client.js";
 import { documentTax } from "./lib/money.js";
@@ -499,6 +501,11 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
   const [batchBank, setBatchBank] = useState(co.bankA||"");
   const [bulkDownloading, setBulkDownloading] = useState(false);
 
+  const viewFor = doc => historyDocumentView(doc);
+  const canBill = doc => isBillable(doc) && !viewFor(doc).issue;
+  const selectedView = sel ? viewFor(sel) : null;
+  const amountLabel = view => view.total == null ? "\u8981\u78ba\u8a8d" : fm(view.total) + "\u5186";
+
   const filt = (history||[]).filter(h=>
     (statusFilter==="all"||(statusFilter==="active"&&!h.voidedAt&&!h.convertedTo)||(statusFilter==="billable"&&isBillable(h))||(statusFilter==="review"&&!h.voidedAt&&h.stockManaged==null))&&
     (typeFilter==="全て"||h.docType===typeFilter)&&
@@ -506,7 +513,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
   );
   const tc = (t) => t==="請求書"?"#1d4ed8":t==="領収書"?"#7c3aed":t==="見積書"?"#d97706":"#047857";
   const totalToday = (history||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
-  const checkedList = filt.filter(h=>checked[h.id] && isBillable(h));
+  const checkedList = filt.filter(h=>checked[h.id] && canBill(h));
   const bulkDocs = filt.filter(h=>!h.voidedAt&&(h.docType==="請求書"||h.docType==="領収書"));
   const checkedCustomers = [...new Set(checkedList.map(h=>h.customer))];
   const toggleCheck = (id, e) => { e.stopPropagation(); setChecked(c=>({...c,[id]:!c[id]})); };
@@ -514,6 +521,11 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
 
   const downloadAllBillingDetails = async () => {
     if (bulkDocs.length===0 || bulkDownloading) return;
+    const needsReview = bulkDocs.filter(d=>viewFor(d).issue);
+    if (needsReview.length) {
+      alert("\u7a0e\u533a\u5206\u30fb\u91d1\u984d\u8981\u78ba\u8a8d: " + needsReview.map(d=>d.docNo).join(", ") + "\n\u539f\u7968\u306e\u78ba\u8a8d\u5f8c\u306bCSV\u51fa\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002");
+      return;
+    }
     setBulkDownloading(true);
     try {
       downloadDocumentsCSV(bulkDocs);
@@ -555,6 +567,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
     updatedAt:undefined,date:tod(),voidedAt:null,convertedTo:null,sourceIds:[],taxSummary:null,
     stockManaged:type==="\u7d0d\u54c1\u66f8",items:(src.items||[]).map(({sourceDocumentId,sourceDocNo,...it})=>({...it,date:tod()}))});
   const convertDoc = async (fromDoc,toType) => {
+    if(viewFor(fromDoc).issue) {alert(viewFor(fromDoc).issue);return;}
     try {
       if(fromDoc.docType==="\u7d0d\u54c1\u66f8"&&toType==="\u8acb\u6c42\u66f8") {
         const saved=await db.invoiceDeliveryNotes([fromDoc.id],{date:tod(),bank:co.bankA||""});
@@ -562,7 +575,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
       } else {setEditTarget(asDraft(fromDoc,toType));setSel(null);}
     } catch(e){alert(e.message);}
   };
-  const copyDoc = src => {setEditTarget(asDraft(src));setSel(null);};
+  const copyDoc = src => {if(viewFor(src).issue){alert(viewFor(src).issue);return;}setEditTarget(asDraft(src));setSel(null);};
 
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
     <div style={{ padding:"10px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
@@ -591,21 +604,25 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
         : <span style={{ color:"#dc2626" }}>{"⚠️ 複数の取引先が混在しています（" + checkedCustomers.join("・") + "）"}</span>
       }
     </div>}
+    {filt.some(d=>viewFor(d).issue)&&<div role="status" style={{padding:"8px 18px",background:"#fffbeb",color:"#92400e",fontSize:12}}>
+      {"\u7a0e\u533a\u5206\u30fb\u91d1\u984d\u8981\u78ba\u8a8d: " + filt.filter(d=>viewFor(d).issue).length + "\u4ef6\u3002\u5143\u30c7\u30fc\u30bf\u306f\u5909\u66f4\u305b\u305a\u8868\u793a\u3057\u3066\u3044\u307e\u3059\u3002"}
+    </div>}
     <div style={{ flex:1, overflowY:"auto" }}>
       {filt.length===0&&<div style={{ textAlign:"center", padding:48, color:"#9ca3af" }}>書類がありません</div>}
       {filt.map(h=>{
-        const tx = calcTax(h.items||[]);
+        const view = viewFor(h);
         const isChecked = !!checked[h.id];
         return <div key={h.id} onClick={()=>batchMode?null:setSel(h)}
           style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 18px", borderBottom:"1px solid #f9f9f9", cursor:batchMode?"default":"pointer", background:isChecked?"#eff6ff":sel?.id===h.id?"#f9fafb":"transparent" }}>
-          {batchMode&&<input type="checkbox" checked={isChecked} disabled={!isBillable(h)} onChange={e=>toggleCheck(h.id,e)} style={{ width:16, height:16, cursor:h.docType==="納品書"?"pointer":"not-allowed", flexShrink:0 }}/>}
+          {batchMode&&<input type="checkbox" checked={isChecked} disabled={!canBill(h)} onChange={e=>toggleCheck(h.id,e)} style={{ width:16, height:16, cursor:h.docType==="納品書"?"pointer":"not-allowed", flexShrink:0 }}/>}
           <span style={{ background:tc(h.docType), color:"#fff", fontSize:11, padding:"2px 6px", borderRadius:3, whiteSpace:"nowrap" }}>{h.docType}</span>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontWeight:500, fontSize:13 }}>{h.customer} <span style={{fontSize:10,color:h.voidedAt?"#b91c1c":"#64748b",fontWeight:400}}>{documentStatus(h)}</span></div>
             <div style={{ fontSize:11, color:"#9ca3af" }}>{h.docNo + " • " + h.date + (h.subject?" • "+h.subject:"")}</div>
           </div>
           <div style={{ textAlign:"right", flexShrink:0 }}>
-            <div style={{ fontWeight:500, fontSize:13 }}>{fm(totalFor(h)) + "円"}</div>
+            <div style={{ fontWeight:500, fontSize:13 }}>{amountLabel(view)}</div>
+            {view.issue&&<div style={{fontSize:10,color:"#b45309"}}>{view.label}{view.total!=null ? " / \u4fdd\u5b58\u984d\uff08\u53c2\u8003\uff09" : ""}</div>}
             <div style={{ fontSize:11, color:"#9ca3af" }}>{h.savedBy}</div>
           </div>
         </div>;
@@ -615,7 +632,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
       <div style={{ fontSize:13, marginBottom:12, color:"#6b7280" }}>{"選択した納品書 " + checkedList.length + "件の品目をまとめて1枚の請求書に変換します。"}</div>
       <div style={{ marginBottom:12 }}>
         {checkedList.sort((a,b)=>a.date>b.date?1:-1).map(d=>{
-          const tx=calcTax(d.items||[]);
+          const tx={total:viewFor(d).total};
           return <div key={d.id} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0", borderBottom:"1px solid #f3f4f6", fontSize:12 }}>
             <span>{d.date + " " + d.docNo}</span><span style={{ fontWeight:500 }}>{fm(tx.total) + "円"}</span>
           </div>;
@@ -635,18 +652,26 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
       {[["書類番号",sel.docNo],["日付",sel.date],["入金期日",sel.dueDate],["件名",sel.subject],["作成者",sel.savedBy]].map(([l,v])=>v?<div key={l} style={{ display:"flex", gap:8, padding:"5px 0", borderBottom:"1px solid #f3f4f6", fontSize:13 }}><span style={{ color:"#6b7280", minWidth:80 }}>{l}</span><span>{v}</span></div>:null)}
       <p style={{fontSize:12,color:'#64748b'}}>{documentStatus(sel)}{sel.voidReason ? ' / '+sel.voidReason : ''}</p>
       {sel.sourceIds?.length>0&&<p style={{fontSize:12}}>{'\u5143\u306e\u7d0d\u54c1\u66f8: '}{sel.sourceIds.map(id=>history.find(d=>d.id===id)?.docNo||id).join(', ')}</p>}
-      {validItems(sel.items).map((it,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0", borderBottom:"1px solid #f3f4f6" }}>
+      {selectedView.items.map((it,i)=><div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"4px 0", borderBottom:"1px solid #f3f4f6" }}>
         <span>{(it.origin?it.origin+" ":"") + it.name + " × " + it.qty + it.unit}</span><span style={{ fontWeight:500 }}>{fm(it.amount) + "円"}</span>
       </div>)}
-      {receiptAmountMismatch(sel)&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginTop:8 }}>⚠️ 明細合計と領収金額が不一致です。領収金額 ¥{fm(sel.amount)} を正とし、明細は参考扱いです。</div>}
-      {(()=>{ const items=validItems(sel.items); const tx=calcTax(items); const total=totalFor(sel); return <div style={{ textAlign:"right", marginTop:8, fontSize:13 }}><div style={{ color:"#6b7280" }}>{items.length>0 ? "消費税: " + fm(tx.tax) + "円" : "領収金額"}</div><div style={{ fontWeight:600, fontSize:15 }}>{"合計: " + fm(total) + "円"}</div></div>; })()}
+      {!selectedView.issue&&receiptAmountMismatch(sel)&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginTop:8 }}>⚠️ 明細合計と領収金額が不一致です。領収金額 ¥{fm(sel.amount)} を正とし、明細は参考扱いです。</div>}
+      {selectedView.issue&&<div role="alert" style={{fontSize:12,color:"#92400e",background:"#fffbeb",padding:10,marginTop:8}}>
+        <strong>{selectedView.label}</strong><p>{selectedView.issue}</p>
+        <p>{"\u5143\u30c7\u30fc\u30bf\u306f\u5909\u66f4\u3057\u3066\u3044\u307e\u305b\u3093\u3002\u78ba\u8a8d\u524d\u306e\u7de8\u96c6\u30fb\u8907\u88fd\u30fb\u8acb\u6c42\u5909\u63db\u30fbPDF\u518d\u767a\u884c\u306f\u505c\u6b62\u3057\u3066\u3044\u307e\u3059\u3002"}</p>
+        <p>{"\u4fdd\u5b58\u6e08\u307f\u660e\u7d30\u306e\u7a0e\u7387: " + selectedView.items.map(i=>String(i.taxRate??"\u672a\u8a2d\u5b9a")).join(", ")}</p>
+      </div>}
+      <div style={{textAlign:"right",marginTop:8,fontSize:13}}>
+        <div style={{color:"#6b7280"}}>{selectedView.tax==null ? "\u6d88\u8cbb\u7a0e: \u672a\u78ba\u5b9a" : "\u6d88\u8cbb\u7a0e: " + fm(selectedView.tax) + "\u5186"}</div>
+        <div style={{fontWeight:600,fontSize:15}}>{(selectedView.issue&&selectedView.total!=null ? "\u4fdd\u5b58\u984d\uff08\u53c2\u8003\uff09: " : "\u5408\u8a08: ") + amountLabel(selectedView)}</div>
+      </div>
       <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
-        {!sel.voidedAt&&!sel.convertedTo&&(sel.docType==="見積書"||sel.docType==="納品書")&&<Btn variant="blue" onClick={()=>convertDoc(sel,"請求書")}>📄 請求書に変換</Btn>}
-        {!sel.voidedAt&&sel.docType==="見積書"&&<Btn variant="ghost" onClick={()=>convertDoc(sel,"納品書")}>📋 納品書に変換</Btn>}
-        <Btn variant="green" onClick={()=>copyDoc(sel)}>📋 コピー作成（当日）</Btn>
+        {!sel.voidedAt&&!sel.convertedTo&&(sel.docType==="見積書"||sel.docType==="納品書")&&<Btn variant="blue" disabled={Boolean(selectedView.issue)} onClick={()=>convertDoc(sel,"請求書")}>📄 請求書に変換</Btn>}
+        {!sel.voidedAt&&sel.docType==="見積書"&&<Btn variant="ghost" disabled={Boolean(selectedView.issue)} onClick={()=>convertDoc(sel,"納品書")}>📋 納品書に変換</Btn>}
+        <Btn variant="green" disabled={Boolean(selectedView.issue)} onClick={()=>copyDoc(sel)}>📋 コピー作成（当日）</Btn>
          <Btn variant="red" disabled={Boolean(sel.voidedAt||sel.convertedTo)} onClick={()=>{setVoidTarget(sel);setSel(null);}}>{'\u53d6\u6d88'}</Btn>
-        <Btn disabled={Boolean(sel.voidedAt||sel.convertedTo)} onClick={()=>{ setEditTarget(sel); setSel(null); }}>✏️ 編集</Btn>
-        <Btn variant="primary" disabled={Boolean(sel.voidedAt)} onClick={()=>generateAndDownloadPDF(sel,co)} style={{ flex:1 }}>📄 PDF</Btn>
+        <Btn disabled={Boolean(sel.voidedAt||sel.convertedTo||selectedView.issue)} onClick={()=>{ setEditTarget(sel); setSel(null); }}>✏️ 編集</Btn>
+        <Btn variant="primary" disabled={Boolean(sel.voidedAt||selectedView.issue)} onClick={()=>generateAndDownloadPDF(sel,co)} style={{ flex:1 }}>📄 PDF</Btn>
       </div>
     </Modal>}
     {voidTarget&&<VoidDocumentModal doc={voidTarget} onClose={()=>setVoidTarget(null)} onSubmit={async(reason,reverse)=>{await db.voidDocument(voidTarget.id,reason,reverse);setHistory(await db.getDocuments());setProducts(await db.getProducts());}}/>}
@@ -1096,7 +1121,7 @@ export default function App() {
         {tab==="masters"&&<div style={{display:'flex',flexDirection:'column',height:'100%'}}><div style={{padding:10,display:'flex',gap:8}}><Btn onClick={()=>setMasterTab('customers')}>{'\u9867\u5ba2\u30de\u30b9\u30bf\u30fc'}</Btn><Btn onClick={()=>setMasterTab('settings')}>{'\u4f1a\u793e\u30fb\u8a2d\u5b9a'}</Btn></div><div style={{flex:1,overflow:'auto'}}>{masterTab==='customers'?<CustomersView customers={customers} setCustomers={setCustomers}/>:<SettingsView co={co} setCo={setCo}/>}</div></div>}
 
         {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
-        {tab==="history"&&<HistoryView initialStatus={routeFilter||"active"} history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} user={user}/>}
+        {tab==="history"&&<HistoryErrorBoundary key={routeFilter||"active"} onHome={()=>setTab("home")}><HistoryView initialStatus={routeFilter||"active"} history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} user={user}/></HistoryErrorBoundary>}
         {tab==="products"&&<ProductsView initialNegative={routeFilter==="negative"} products={products} setProducts={setProducts} user={user}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}
