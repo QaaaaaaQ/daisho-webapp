@@ -32,8 +32,8 @@ export function validItems(items = []) {
     name: String(item.name || "").trim(),
     qty: Number(item.qty || 0),
     price: Number(item.price || 0),
-    amount: Number(item.amount || 0),
-    taxRate: Number(item.taxRate) === 10 ? 10 : 8,
+    amount: Number(Number(item.amount || 0).toFixed(6)),
+    taxRate: Number(item.taxRate ?? 8),
     taxIncluded: Boolean(item.taxIncluded),
   }));
 }
@@ -52,6 +52,8 @@ export function validateItems(items, { requirePrice = true } = {}) {
   const rows = validItems(items);
   if (rows.length === 0) return "少なくとも1件の明細を入力してください";
   for (const item of rows) {
+    if (![item.qty,item.price,item.amount].every(Number.isFinite)) return "\u6570\u91cf\u30fb\u5358\u4fa1\u30fb\u91d1\u984d\u306f\u6709\u52b9\u306a\u6570\u5024\u3067\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044";
+    if (![8,10].includes(item.taxRate)) return "\u7a0e\u7387\u306f8%\u307e\u305f\u306f10%\u3092\u6307\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044";
     if (!item.name) return "明細の商品名を入力してください";
     if (!(item.qty > 0)) return `「${item.name || "明細"}」の数量は0より大きくしてください`;
     if (requirePrice && !(item.price >= 0)) return `「${item.name}」の単価を入力してください`;
@@ -66,6 +68,7 @@ export function validateDocument(doc) {
   if (!DOC_TYPES.includes(doc.docType)) return "書類種別が正しくありません";
   if (!String(doc.customer || "").trim()) return "取引先を入力してください";
   const items = validItems(doc.items);
+  if (!Number.isFinite(Number(doc.amount || 0))) return "\u6709\u52b9\u306a\u91d1\u984d\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044";
   if (doc.docType === "領収書") {
     if (!(Number(doc.amount || 0) > 0) && items.length === 0) return "領収金額、または内容明細を入力してください";
     if (items.length > 0) return validateItems(items);
