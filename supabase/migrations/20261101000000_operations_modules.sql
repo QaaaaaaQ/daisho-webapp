@@ -130,15 +130,14 @@ REVOKE INSERT,UPDATE,DELETE ON public.inventory_locations,public.inventory_lots,
 GRANT SELECT ON public.inventory_locations,public.inventory_lots,public.inventory_reservations,public.inventory_movements TO authenticated;
 INSERT INTO public.inventory_locations(name) VALUES ('主倉庫') ON CONFLICT(name) DO NOTHING;
 
--- Keep ordinary staff scoped to their own documents; administrator access comes
--- from the existing server check or the new server-owned role table.
+-- Preserve the existing shared read model; administrative writes are role-gated.
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.company_settings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS auth_read_docs ON public.documents;
 DROP POLICY IF EXISTS auth_update_docs ON public.documents;
 DROP POLICY IF EXISTS documents_read_own_or_admin ON public.documents;
-CREATE POLICY documents_read_own_or_admin ON public.documents FOR SELECT TO authenticated
-  USING(created_by=auth.uid() OR public.current_user_role()='admin');
+DROP POLICY IF EXISTS documents_read_authenticated ON public.documents;
+CREATE POLICY documents_read_authenticated ON public.documents FOR SELECT TO authenticated USING(true);
 -- All document writes must pass through the transactional workflow RPCs.
 REVOKE INSERT,UPDATE,DELETE ON public.documents FROM PUBLIC,anon,authenticated;
 DROP POLICY IF EXISTS auth_write_company ON public.company_settings;

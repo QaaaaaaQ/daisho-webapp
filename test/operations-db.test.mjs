@@ -43,6 +43,7 @@ test('reserve shipment mode is stored when a delivery document is created',async
 test('authenticated document creation is restricted to the atomic workflow RPC',async()=>{
   assert.equal((await pg.query("SELECT has_table_privilege('authenticated','public.documents','INSERT') allowed")).rows[0].allowed,false);
   assert.equal((await pg.query("SELECT has_table_privilege('authenticated','public.documents','UPDATE') allowed")).rows[0].allowed,false);
+  assert.equal((await pg.query("SELECT qual FROM pg_policies WHERE tablename='documents' AND policyname='documents_read_authenticated'")).rows[0].qual,'true');
 });
 
 test('reserve, ship, and cancel preserve independent kg and case balances',async()=>{
