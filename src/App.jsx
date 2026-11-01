@@ -551,7 +551,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
     if (pcaDownloading) return;
     setPcaDownloading(true);
     try {
-      const csv = pcaInvoicesToCSV(history, customers, pcaFromMonth, pcaToMonth);
+      const csv = pcaInvoicesToCSV(history, customers, products, pcaFromMonth, pcaToMonth);
       const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -659,6 +659,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       <Btn small variant="blue" onClick={downloadPcaSales} disabled={pcaDownloading||!pcaFromMonth||!pcaToMonth} title="請求書の売上明細をPCA仕訳CSVへ変換">
         {pcaDownloading?"⏳ PCA CSV作成中...":"📤 PCA仕訳CSVを出力（45列）"}
       </Btn>
+      <span style={{ flexBasis:"100%", fontSize:11, color:"#64748b" }}>売上補助科目コードは商品マスターの分類から決定します。</span>
     </div>
     {batchMode&&checkedList.length>0&&<div style={{ padding:"8px 18px", background:"#eff6ff", borderBottom:"1px solid #bfdbfe", fontSize:12 }}>
       {checkedCustomers.length===1
