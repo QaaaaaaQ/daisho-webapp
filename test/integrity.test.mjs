@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {calcTax,receiptTax,documentTax} from '../src/lib/money.js';
-import {createWorkflowClient,mapDocument,isBillable} from '../src/lib/workflow-client.js';
+import {createWorkflowClient,mapDocument,isBillable,documentStatus} from '../src/lib/workflow-client.js';
 import {buildReceiptHTML} from '../src/lib/pdf.js';
 import {validateDocument,validItems} from '../src/lib/domain.js';
 const INV='\u8acb\u6c42\u66f8',DEL='\u7d0d\u54c1\u66f8',REC='\u9818\u53ce\u66f8';
@@ -73,6 +73,12 @@ test('Infinity is not an acceptable manual receipt amount',()=>{
 test('status mapper retains concurrency, conversion, void and inventory fields',()=>{
  const d=mapDocument({id:'x',doc_type:DEL,updated_at:'now',stock_managed:false,voided_at:'past',source_document_ids:['a']});
  assert.equal(d.updatedAt,'now');assert.equal(d.stockManaged,false);assert.equal(isBillable(d),false);assert.deepEqual(d.sourceIds,['a']);
+});
+test('reserved deliveries show reservation, shipment, and release status',()=>{
+ const reserved=mapDocument({id:'r',doc_type:DEL,inventory_mode:'reserve',inventory_reservations:[{status:'reserved'}]});
+ const shipped=mapDocument({id:'s',doc_type:DEL,inventory_mode:'reserve',inventory_reservations:[{status:'shipped'}]});
+ const released=mapDocument({id:'x',doc_type:DEL,inventory_mode:'reserve',inventory_reservations:[{status:'released'}]});
+ assert.match(documentStatus(reserved),/予約済/);assert.match(documentStatus(shipped),/出荷済/);assert.match(documentStatus(released),/解放済/);
 });
 const memory=()=>{const m=new Map();return {getItem:k=>m.get(k),setItem:(k,v)=>m.set(k,v),removeItem:k=>m.delete(k)};};
 test('client coalesces simultaneous submissions into one request',async()=>{

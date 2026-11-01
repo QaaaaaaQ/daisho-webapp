@@ -40,7 +40,9 @@ export function mapDocument(row) {
     description:row.description,toAddr:row.to_addr,toContact:row.to_contact,items:row.items||[],
     expiryDate:row.expiry_date,conditions:row.conditions,savedAt:row.created_at,
     savedBy:row.created_by_name,savedByEmail:row.created_by_email,createdBy:row.created_by,
-    updatedAt:row.updated_at,stockManaged:row.stock_managed ?? null,inventoryMode:row.inventory_mode||'none',voidedAt:row.voided_at,
+    updatedAt:row.updated_at,stockManaged:row.stock_managed ?? null,inventoryMode:row.inventory_mode||'none',
+    inventoryStatus:(row.inventory_reservations||[]).some(r=>r.status==='reserved')?'reserved':(row.inventory_reservations||[]).some(r=>r.status==='shipped')?'shipped':(row.inventory_reservations||[]).some(r=>r.status==='released')?'released':null,
+    voidedAt:row.voided_at,
     voidReason:row.void_reason,convertedTo:row.converted_to_document_id,convertedAt:row.converted_at,
     sourceIds:row.source_document_ids||[],taxSummary:row.tax_summary,workflowVersion:row.workflow_version
   };
@@ -51,6 +53,11 @@ export function isBillable(doc) {
 export function documentStatus(doc) {
   if(doc.voidedAt) return '\u53d6\u6d88\u6e08';
   if(doc.convertedTo) return '\u8acb\u6c42\u66f8\u306b\u307e\u3068\u3081\u6e08';
+  if(doc.inventoryMode==='reserve') {
+    if(doc.inventoryStatus==='shipped') return '\u51fa\u8377\u6e08\uff08\u4e88\u7d04\u51fa\u8377\uff09';
+    if(doc.inventoryStatus==='released') return '\u4e88\u7d04\u89e3\u653e\u6e08';
+    return '\u5728\u5eab\u4e88\u7d04\u6e08\uff08\u51fa\u8377\u5f85\u3061\uff09';
+  }
   if(doc.stockManaged==null) return '\u65e7\u66f8\u985e\u30fb\u5728\u5eab\u8981\u78ba\u8a8d';
   return doc.stockManaged ? '\u51fa\u5eab\u8a18\u9332\u3042\u308a' : '\u5728\u5eab\u79fb\u52d5\u306a\u3057';
 }

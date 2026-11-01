@@ -27,7 +27,7 @@ function resultDocument(result) {
 export const db = {
   // ── Documents ──────────────────────────────────────────────
   async getDocuments() {
-    const { data, error } = await supabase.from("documents").select("*").order("created_at", { ascending: false });
+    const { data, error } = await supabase.from("documents").select("*,inventory_reservations(status)").order("created_at", { ascending: false });
     if (error) throw error;
     return (data || []).map(normalizeDoc);
   },
