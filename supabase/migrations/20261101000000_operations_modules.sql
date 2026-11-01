@@ -15,6 +15,12 @@ BEGIN
     RAISE EXCEPTION 'sales_workflow source differs; review migration before applying';
   END IF;
   updated_definition:=replace(updated_definition,'public.is_admin()','public.current_user_role()=''admin''');
+  IF position('IF manage THEN effects:=app_private.sync_stock_v2(doc); END IF;' in updated_definition)=0 THEN
+    RAISE EXCEPTION 'sales_workflow reserve hook differs; review migration before applying';
+  END IF;
+  updated_definition:=replace(updated_definition,
+    'IF manage THEN effects:=app_private.sync_stock_v2(doc); END IF;',
+    'IF manage THEN effects:=app_private.sync_stock_v2(doc); END IF; IF doc.inventory_mode=''reserve'' THEN PERFORM public.inventory_workflow(''reserve'',doc.id,NULL,''受注確定''); END IF;');
   IF updated_definition<>definition THEN EXECUTE updated_definition; END IF;
 END $$;
 
@@ -380,6 +386,7 @@ BEGIN
   IF actor IS NULL OR public.current_user_role()<>'admin' THEN RAISE EXCEPTION '税率修正は管理者のみ実行できます'; END IF;
   SELECT * INTO doc FROM public.documents WHERE id=p_document_id FOR UPDATE;
   IF NOT FOUND OR doc.updated_at IS DISTINCT FROM p_expected_updated_at THEN RAISE EXCEPTION '書類が更新されています。最新の明細を再確認してください'; END IF;
+  IF doc.doc_no='DEL-9102950006' THEN RAISE EXCEPTION 'この書類は今回の履歴修正対象外です'; END IF;
   IF jsonb_typeof(p_rates)<>'array' OR jsonb_array_length(p_rates)<>jsonb_array_length(doc.items) THEN RAISE EXCEPTION '明細税率の数が一致しません'; END IF;
   old_items:=doc.items; old_summary:=doc.tax_summary;
   FOR item_value IN SELECT value FROM jsonb_array_elements(doc.items) LOOP

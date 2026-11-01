@@ -167,10 +167,6 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
         onClose(); setSaving(false); return;
       }
       setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
-      if(saved.inventoryMode==="reserve") {
-        try { await db.inventoryWorkflow('reserve',saved.id,null,'受注確定'); }
-        catch(e) { alert(`書類 ${saved.docNo} は保存済みですが、在庫を予約できませんでした: ${e.message}\n在庫・入金連携画面から在庫を確認して再試行してください。`); onClose(); return; }
-      }
       const result = await autoRegisterAndStock({...saved}, user);
       if (result.newCustomer || result.newProducts.length > 0) {
         const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
@@ -513,6 +509,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, rol
 
   const viewFor = doc => historyDocumentView(doc);
   const canBill = doc => isBillable(doc) && !viewFor(doc).issue;
+  const excludedLegacyDocument = sel?.docNo === "DEL-9102950006";
   const selectedView = sel ? viewFor(sel) : null;
   const amountLabel = view => view.total == null ? "\u8981\u78ba\u8a8d" : fm(view.total) + "\u5186";
 
@@ -689,10 +686,12 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, rol
         <strong>{selectedView.label}</strong><p>{selectedView.issue}</p>
         <p>{"\u5143\u30c7\u30fc\u30bf\u306f\u81ea\u52d5\u4fee\u6b63\u3057\u307e\u305b\u3093\u3002\u7a0e\u7387\u306e\u4fee\u6b63\u306f\u7ba1\u7406\u8005\u304c\u539f\u7968\u78ba\u8a8d\u5f8c\u306b\u66f8\u985e\u5358\u4f4d\u3067\u78ba\u5b9a\u3067\u304d\u307e\u3059\u3002"}</p>
         <p>{"\u4fdd\u5b58\u6e08\u307f\u660e\u7d30\u306e\u7a0e\u7387: " + selectedView.items.map(i=>String(i.taxRate??"\u672a\u8a2d\u5b9a")).join(", ")}</p>
-        {selectedView.items.map((item,index)=><div key={index} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0'}}><span style={{flex:1}}>{item.name||`明細 ${index+1}`}</span><span>{String(item.taxRate??'未設定')}%</span><select aria-label={`${item.name||`明細 ${index+1}`} の確認税率`} value={taxRates[index]??''} onChange={e=>setTaxRates(r=>r.map((v,i)=>i===index?Number(e.target.value):v))}><option value="">原票確認後に選択</option>{![8,10].includes(Number(item.taxRate))&&<option value={Number(item.taxRate)||0} disabled>保存済み {String(item.taxRate??'未設定')}%</option>}<option value={8}>8%</option><option value={10}>10%</option></select></div>)}
-        <p>原票で全明細の税率を確認してください。修正は1件ずつ保存され、過去データは監査履歴に残ります。</p>
-        {role==='admin'&&<Btn variant="blue" onClick={repairTax}>税率を確認・この書類だけ修正</Btn>}
-        <Btn variant="primary" onClick={reissueLegacyPdf}>原票確認後にPDF再発行</Btn>
+        {excludedLegacyDocument?<p>この書類は今回の修正対象外です。</p>:<>
+          {selectedView.items.map((item,index)=><div key={index} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0'}}><span style={{flex:1}}>{item.name||`明細 ${index+1}`}</span><span>{String(item.taxRate??'未設定')}%</span><select aria-label={`${item.name||`明細 ${index+1}`} の確認税率`} value={taxRates[index]??''} onChange={e=>setTaxRates(r=>r.map((v,i)=>i===index?Number(e.target.value):v))}><option value="">原票確認後に選択</option>{![8,10].includes(Number(item.taxRate))&&<option value={Number(item.taxRate)||0} disabled>保存済み {String(item.taxRate??'未設定')}%</option>}<option value={8}>8%</option><option value={10}>10%</option></select></div>)}
+          <p>原票で全明細の税率を確認してください。修正は1件ずつ保存され、過去データは監査履歴に残ります。</p>
+          {role==='admin'&&<Btn variant="blue" onClick={repairTax}>税率を確認・この書類だけ修正</Btn>}
+          <Btn variant="primary" onClick={reissueLegacyPdf}>原票確認後にPDF再発行</Btn>
+        </>}
       </div>}
       <div style={{textAlign:"right",marginTop:8,fontSize:13}}>
         <div style={{color:"#6b7280"}}>{selectedView.tax==null ? "\u6d88\u8cbb\u7a0e: \u672a\u78ba\u5b9a" : "\u6d88\u8cbb\u7a0e: " + fm(selectedView.tax) + "\u5186"}</div>

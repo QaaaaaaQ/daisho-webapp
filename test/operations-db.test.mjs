@@ -19,11 +19,25 @@ test.before(async()=>{
 test.after(async()=>pg?.close());
 
 test('reserve shipment mode is stored when a delivery document is created',async()=>{
+  const reserveProduct=randomUUID();
+  const location=(await pg.query("SELECT id FROM inventory_locations WHERE name='主倉庫'")).rows[0].id;
+  await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[reserveProduct,'Atomic reserve fish','kg']);
+  await pg.query("INSERT INTO inventory_lots(product_id,location_id,lot_code,on_hand_kg,on_hand_cases) VALUES($1,$2,'ATOMIC-OPENING',100,20)",[reserveProduct,location]);
   const request=randomUUID();
   const payload={doc:{docType:'納品書',date:'2026-10-31',customer:'Reserve customer',stockManaged:false,inventoryMode:'reserve',
-    items:[{productId:product,name:'Fish',unit:'kg',qty:2,price:100,amount:200,taxRate:8,taxIncluded:false}]}};
+    items:[{productId:reserveProduct,name:'Atomic reserve fish',unit:'kg',qty:2,caseCount:1,price:100,amount:200,taxRate:8,taxIncluded:false}]}};
   const result=(await pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid) value',['create',JSON.stringify(payload),request])).rows[0].value;
   assert.equal(result.document.inventory_mode,'reserve');
+  const reservation=(await pg.query('SELECT status,quantity_kg,case_count FROM inventory_reservations WHERE document_id=$1',[result.document.id])).rows[0];
+  assert.equal(reservation.status,'reserved');assert.equal(Number(reservation.quantity_kg),2);assert.equal(Number(reservation.case_count),1);
+  const limitedProduct=randomUUID();
+  await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,5)',[limitedProduct,'Insufficient reserve fish','kg']);
+  await pg.query("INSERT INTO inventory_lots(product_id,location_id,lot_code,on_hand_kg,on_hand_cases) VALUES($1,$2,'LIMITED-OPENING',5,1)",[limitedProduct,location]);
+  const failPayload={doc:{docType:'納品書',date:'2026-10-31',customer:'Must roll back',stockManaged:false,inventoryMode:'reserve',
+    items:[{productId:limitedProduct,name:'Insufficient reserve fish',unit:'kg',qty:6,caseCount:1,price:100,amount:600,taxRate:8,taxIncluded:false}]}};
+  await assert.rejects(pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid)',['create',JSON.stringify(failPayload),randomUUID()]));
+  assert.equal((await pg.query("SELECT count(*)::int n FROM documents WHERE customer='Must roll back'")).rows[0].n,0);
+  assert.equal((await pg.query("SELECT count(*)::int n FROM inventory_reservations WHERE product_id=$1",[limitedProduct])).rows[0].n,0);
 });
 
 test('authenticated document creation is restricted to the atomic workflow RPC',async()=>{
@@ -82,6 +96,15 @@ test('historical rate correction requires admin and writes an item-level audit r
   assert.equal(audit.old_items[0].taxRate,0);assert.equal(audit.new_items[0].taxRate,8);
   const updated=(await pg.query('SELECT updated_at FROM documents WHERE id=$1',[repairDocId])).rows[0].updated_at;
   await assert.rejects(pg.query('SELECT repair_legacy_document_tax($1,$2,$3::jsonb) result',[repairDocId,updated,'[null]']));
+});
+
+test('the user-excluded legacy document cannot be changed by the repair RPC',async()=>{
+  const excludedId=randomUUID();
+  await pg.query("INSERT INTO documents(id,doc_type,doc_no,date,customer,items,created_by) VALUES($1,'納品書','DEL-9102950006','2026-10-31','Excluded test record',$2,$3)",[excludedId,JSON.stringify([{name:'fish',qty:1,price:100,amount:100,taxRate:0}]),actor]);
+  const before=(await pg.query('SELECT items FROM documents WHERE id=$1',[excludedId])).rows[0].items;
+  const updated=(await pg.query('SELECT updated_at FROM documents WHERE id=$1',[excludedId])).rows[0].updated_at;
+  await assert.rejects(pg.query('SELECT repair_legacy_document_tax($1,$2,$3::jsonb)',[excludedId,updated,'[8]']));
+  assert.deepEqual((await pg.query('SELECT items FROM documents WHERE id=$1',[excludedId])).rows[0].items,before);
 });
 
 test('inventory lot RPC rejects non-finite kg before it can enter stock balances',async()=>{
