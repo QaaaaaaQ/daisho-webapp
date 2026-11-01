@@ -1,6 +1,18 @@
-const SALES_ACCOUNT = { code: '513', name: '水産売上高', subCode: '002' };
+const SALES_ACCOUNT = { code: '513', name: '水産売上高' };
 const RECEIVABLE_ACCOUNT = { code: '152', name: '売掛金' };
 const TAX_CODES = { 8: 'B6', 10: 'B5' };
+const SALES_SUBACCOUNT_BY_CATEGORY = {
+  'アサリ': '021',
+  'アワビ': '005',
+  'あんこう': '009',
+  'うなぎ': '011',
+  'サザエ': '002',
+  'ふぐ類': '008',
+  'ホタテ': '020',
+  '蛤': '003',
+  '蟹類': '016',
+  '赤貝': '001',
+};
 
 function normalizeName(value) {
   return String(value || '').normalize('NFKC').replace(/[\s　]/g, '').trim();
@@ -26,6 +38,14 @@ function normalizeDate(value) {
   const match = String(value || '').match(/^(\d{4})[-/.]?(\d{1,2})[-/.]?(\d{1,2})/);
   if (!match) return '';
   return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+}
+
+function productForItem(item, products) {
+  const linked = (products || []).find(product => product.id === item.productId);
+  if (linked) return linked;
+  const name = normalizeName(item.name);
+  const matches = (products || []).filter(product => normalizeName(product.name) === name);
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function departmentForItem(item) {
@@ -64,20 +84,29 @@ function allocateTax(rows, rate) {
   });
 }
 
-function rowsForInvoice(doc, fromMonth, toMonth) {
+function rowsForInvoice(doc, products, fromMonth, toMonth) {
   const candidates = (doc.items || [])
     .filter(item => item && !item.receiptTaxSummary && (String(item.name || '').trim() || Number(item.amount || 0) !== 0))
     .map(item => ({ item, date: normalizeDate(item.date || doc.date) }))
-    .filter(row => row.date && row.date.slice(0, 7) >= fromMonth && row.date.slice(0, 7) <= toMonth);
+    .filter(row => row.date && row.date.slice(0, 7) >= fromMonth && row.date.slice(0, 7) <= toMonth)
+    .map(row => {
+      const { item, date } = row;
+      const product = productForItem(item, products);
+      if (!product?.category || !SALES_SUBACCOUNT_BY_CATEGORY[product.category]) {
+        throw new Error(`商品マスターの分類またはPCA補助コードを確認できません: ${item.name || '明細'}`);
+      }
+      return { item, category: product.category, date };
+    })
   const unsupported = candidates.filter(({ item }) => ![8, 10].includes(Number(item.taxRate)));
   if (unsupported.length) {
     throw new Error(`PCA出力に対応していない税率があります（${[...new Set(unsupported.map(({ item }) => `${Number(item.taxRate)}%`))].join('、')}）。原票を確認してください。`);
   }
   const invalid = candidates.filter(({ item }) => !String(item.name || '').trim() || !Number.isSafeInteger(Number(item.amount)) || Number(item.amount) <= 0);
   if (invalid.length) throw new Error(`品名または正の明細金額が不足している請求書があります: ${doc.docNo || doc.customer || '請求書'}`);
-  const calculated = candidates.map(({ item, date }) => ({
+  const calculated = candidates.map(({ item, date, category }) => ({
     item,
     date,
+    category,
     rate: Number(item.taxRate),
     included: Boolean(item.taxIncluded),
     originalAmount: Number(item.amount),
@@ -107,7 +136,7 @@ function pcaRow(doc, line, customerMaster) {
   row[16] = departmentForItem(line.item);
   row[18] = SALES_ACCOUNT.code;
   row[19] = SALES_ACCOUNT.name;
-  row[20] = SALES_ACCOUNT.subCode;
+  row[20] = SALES_SUBACCOUNT_BY_CATEGORY[line.category];
   row[22] = TAX_CODES[line.rate];
   row[24] = String(line.gross);
   row[25] = String(line.tax);
@@ -121,7 +150,7 @@ function quoteCell(value) {
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-export function pcaInvoicesToCSV(documents, customers, fromMonth, toMonth) {
+export function pcaInvoicesToCSV(documents, customers, products, fromMonth, toMonth) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(fromMonth || '') || !/^\d{4}-(0[1-9]|1[0-2])$/.test(toMonth || '') || fromMonth > toMonth) {
     throw new Error('開始月と終了月を正しく指定してください。');
   }
@@ -130,7 +159,7 @@ export function pcaInvoicesToCSV(documents, customers, fromMonth, toMonth) {
   const customersWithoutPcaCode = [];
   const ambiguousCustomers = [];
   (documents || []).filter(doc => doc?.docType === '請求書' && !doc.voidedAt).forEach(doc => {
-    const lines = rowsForInvoice(doc, fromMonth, toMonth);
+    const lines = rowsForInvoice(doc, products, fromMonth, toMonth);
     if (!lines.length) return;
     const match = findCustomerMaster(customers, doc.customer);
     if (match.ambiguous) {
