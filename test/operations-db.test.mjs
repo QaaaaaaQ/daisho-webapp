@@ -50,6 +50,12 @@ test('authenticated document creation is restricted to the atomic workflow RPC',
   assert.match((await pg.query("SELECT qual FROM pg_policies WHERE tablename='documents' AND policyname='documents_read_owner_or_admin'")).rows[0].qual,/created_by.*uid/);
   assert.equal((await pg.query("SELECT has_function_privilege('authenticated','public.create_document(jsonb)','EXECUTE') allowed")).rows[0].allowed,false);
   assert.equal((await pg.query("SELECT has_function_privilege('authenticated','public.sales_workflow(text,jsonb,uuid)','EXECUTE') allowed")).rows[0].allowed,true);
+  await pg.exec('SET ROLE authenticated');
+  try {
+    const payload={doc:{docType:'領収書',date:'2026-11-01',customer:'RPC test',amount:100,items:[]}};
+    const result=(await pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid) value',['create',JSON.stringify(payload),randomUUID()])).rows[0].value;
+    assert.equal(result.document.customer,'RPC test');
+  } finally { await pg.exec('RESET ROLE'); }
 });
 
 test('editing a reserved document updates reservations atomically and shipped quantities cannot change',async()=>{
