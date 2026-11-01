@@ -14,6 +14,7 @@ test.before(async()=>{
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101031605_pca_manual_payment_and_account_mapping.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101032348_disable_payment_csv_import.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101080517_sync_reserved_document_changes.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261101080626_revoke_legacy_workflow_rpcs.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
@@ -47,6 +48,8 @@ test('authenticated document creation is restricted to the atomic workflow RPC',
   assert.equal((await pg.query("SELECT has_table_privilege('authenticated','public.documents','INSERT') allowed")).rows[0].allowed,false);
   assert.equal((await pg.query("SELECT has_table_privilege('authenticated','public.documents','UPDATE') allowed")).rows[0].allowed,false);
   assert.match((await pg.query("SELECT qual FROM pg_policies WHERE tablename='documents' AND policyname='documents_read_owner_or_admin'")).rows[0].qual,/created_by.*uid/);
+  assert.equal((await pg.query("SELECT has_function_privilege('authenticated','public.create_document(jsonb)','EXECUTE') allowed")).rows[0].allowed,false);
+  assert.equal((await pg.query("SELECT has_function_privilege('authenticated','public.sales_workflow(text,jsonb,uuid)','EXECUTE') allowed")).rows[0].allowed,true);
 });
 
 test('editing a reserved document updates reservations atomically and shipped quantities cannot change',async()=>{
