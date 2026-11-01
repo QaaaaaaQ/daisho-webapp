@@ -13,6 +13,7 @@ def mkdoc(n,typ=DEL):
  return {'id':f'33333333-3333-4333-8333-{n:012}','doc_type':typ,'doc_no':f'DEL-{n:06}','date':'2026-10-28','customer':'Demo buyer '+str(n),'items':[copy.deepcopy(item)],'stock_managed':True,'created_by':uid,'created_at':now,'updated_at':now,'source_document_ids':[],'workflow_version':2,'amount':216}
 docs=[mkdoc(1),mkdoc(2),mkdoc(3,EST)]
 docs[2]['stock_managed']=None
+excluded=mkdoc(9102950006);excluded['items'][0]['taxRate']=0;excluded['doc_no']='DEL-9102950006';docs.append(excluded)
 products=[{'id':pid,'code':'P-001','name':'Demo item','origin':'\u56fd\u7523','unit':'kg','stock':100,'price':100,'tax_rate':8,'category':'\u30b5\u30b6\u30a8'},
  {'id':'44444444-4444-4444-8444-444444444444','code':'P-002','name':'Other item','origin':'\u56fd\u7523','unit':'kg','stock':-1,'price':200,'tax_rate':8,'category':'\u30a2\u30ef\u30d3'}]
 requests=[];errors=[];dialogs=[]
@@ -56,10 +57,20 @@ with sync_playwright() as p:
  page.get_by_text('\u2713 \u4fdd\u5b58\u6e08',exact=True).wait_for()
  requests=page.evaluate('window.__requests');assert requests[-1]['p_action']=='create' and len(requests)==n+1
  page.screenshot(path=str(OUT/'sales-confirmed.png'),full_page=True)
+ page.get_by_role('button',name=re.compile('\u5728\u5eab\u30fb\u5165\u91d1\u9023\u643a')).click()
+ page.get_by_text('\u5728\u5eab\u30fb\u30ed\u30c3\u30c8\u7ba1\u7406\uff08\u7bb1\u6570 + kg\u5b9f\u91cd\u91cf\uff09').wait_for()
+ page.get_by_text('\u5165\u91d1CSV / PCA\u5411\u3051\u624b\u52d5\u7167\u5408').wait_for()
+ page.get_by_text('\u30e6\u30fc\u30b6\u30fc\u6a29\u9650').wait_for()
+ page.get_by_role('button',name=re.compile('\u8acb\u6c42\u30fb\u767a\u884c\u5c65\u6b74')).click()
+ page.get_by_text('DEL-9102950006',exact=False).click()
+ assert page.get_by_role('button',name=re.compile('\u7a0e\u7387\u3092\u78ba\u8a8d')).count()==0
+ assert page.get_by_role('button',name=re.compile('\u539f\u7968\u78ba\u8a8d\u5f8c\u306bPDF\u518d\u767a\u884c')).count()==0
+ page.get_by_role('button',name='\u00d7').click()
  page.set_viewport_size({'width':390,'height':844})
+ page.locator('main').get_by_role('button').first.click()
  page.get_by_role('button',name=re.compile('\u4eca\u65e5\u306e\u696d\u52d9')).click()
  page.screenshot(path=str(OUT/'home-mobile.png'),full_page=True)
  assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
  assert not errors,errors
  browser.close()
-print(json.dumps({'ui_checks':7,'javascript_errors':errors,'unexpected_alerts':dialogs,'rpc_calls':len(requests)},ensure_ascii=False))
+print(json.dumps({'ui_checks':12,'javascript_errors':errors,'unexpected_alerts':dialogs,'rpc_calls':len(requests)},ensure_ascii=False))

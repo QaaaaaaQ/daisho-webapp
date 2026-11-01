@@ -10,6 +10,7 @@ CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $$
 $$;
 CREATE TABLE public.products (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text NOT NULL,
  code text,origin text,unit text,stock numeric DEFAULT 0,created_at timestamptz DEFAULT now());
+CREATE TABLE public.company_settings (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),admin_emails text DEFAULT '',name text);
 CREATE TABLE public.documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),doc_type text NOT NULL,
  doc_no text UNIQUE,date date,customer text,subject text,due_date date,bank text,note text,amount numeric,
  description text,to_addr text,to_contact text,items jsonb DEFAULT '[]',expiry_date date,conditions text,
@@ -55,3 +56,4 @@ ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_logs ENABLE ROW LEVEL SECURITY;
 GRANT USAGE ON SCHEMA auth,public TO authenticated,anon;
 GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated,anon;
+GRANT SELECT,INSERT,UPDATE,DELETE ON public.documents TO authenticated;

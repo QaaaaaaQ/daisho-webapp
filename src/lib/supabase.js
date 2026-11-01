@@ -17,7 +17,7 @@ function documentPayload(doc) {
   const n=normalizeDocument(doc);
   const error=validateDocument(n);if(error)throw new Error(error);
   const fields=['docType','date','customer','subject','dueDate','bank','note','amount','description',
-    'toAddr','toContact','items','expiryDate','conditions','stockManaged'];
+    'toAddr','toContact','items','expiryDate','conditions','stockManaged','inventoryMode'];
   return Object.fromEntries(fields.filter(k=>n[k]!==undefined).map(k=>[k,n[k]]));
 }
 function resultDocument(result) {
@@ -98,6 +98,54 @@ export const db = {
     if(!Number.isFinite(Number(change))||!Number(change)||!String(reason||'').trim())throw new Error("\u6570\u91cf\u3068\u7406\u7531\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044");
     const result=await workflow('adjust',{productId:id,change:Number(change),reason:String(reason).trim()});
     return Number(result.stock);
+  },
+  async getUserRole() {
+    const {data,error}=await supabase.rpc('current_user_role'); if(error)throw error; return data;
+  },
+  async listUsers() {
+    const {data,error}=await supabase.rpc('list_app_users'); if(error)throw error; return data||[];
+  },
+  async setUserRole(userId,role) {
+    const {error}=await supabase.rpc('set_user_role',{p_user_id:userId,p_role:role}); if(error)throw error;
+  },
+  async getInventory() {
+    const [locations,lots,reservations]=await Promise.all([
+      supabase.from('inventory_locations').select('*').eq('active',true).order('name'),
+      supabase.from('inventory_lots').select('*,products(id,code,name,unit),inventory_locations(id,name)').order('expires_on',{ascending:true,nullsFirst:false}),
+      supabase.from('inventory_reservations').select('*,documents(doc_no,customer),products(name,code),inventory_locations(name)').order('created_at',{ascending:false})
+    ]);
+    for(const result of [locations,lots,reservations])if(result.error)throw result.error;
+    return {locations:locations.data||[],lots:lots.data||[],reservations:reservations.data||[]};
+  },
+  async createInventoryLocation(name) {
+    const {data,error}=await supabase.rpc('create_inventory_location',{p_name:name}); if(error)throw error; return data;
+  },
+  async createInventoryLot(values) {
+    const {data,error}=await supabase.rpc('create_inventory_lot',{p_product_id:values.productId,p_location_id:values.locationId,
+      p_lot_code:values.lotCode,p_received_on:values.receivedOn||null,p_expires_on:values.expiresOn||null,p_kg:Number(values.kg),p_cases:Number(values.cases),p_event:values.event||'opening_balance',p_note:values.note||null});
+    if(error)throw error; return data;
+  },
+  async inventoryWorkflow(action,documentId,locationId,note) {
+    const {data,error}=await supabase.rpc('inventory_workflow',{p_action:action,p_document_id:documentId,p_location_id:locationId||null,p_note:note||null});
+    if(error)throw error; return data;
+  },
+  async getPayments() {
+    const {data,error}=await supabase.from('payments').select('*,payment_allocations(id,document_id,amount,documents(doc_no,customer))').order('payment_date',{ascending:false});
+    if(error)throw error; return data||[];
+  },
+  async importPayments(rows) {
+    const {data,error}=await supabase.rpc('import_payments',{p_rows:rows}); if(error)throw error; return data;
+  },
+  async allocatePayment(paymentId,documentId,amount) {
+    const key=`daisho-payment-allocation:${paymentId}:${documentId}:${Number(amount)}`;
+    let requestId;try{requestId=sessionStorage.getItem(key);}catch{}
+    requestId||=crypto.randomUUID();try{sessionStorage.setItem(key,requestId);}catch{}
+    const {data,error}=await supabase.rpc('allocate_payment',{p_payment_id:paymentId,p_document_id:documentId,p_amount:Number(amount),p_request_id:requestId});
+    if(error)throw error;try{sessionStorage.removeItem(key);}catch{} return data;
+  },
+  async repairLegacyTax(documentId,expectedUpdatedAt,rates) {
+    const {data,error}=await supabase.rpc('repair_legacy_document_tax',{p_document_id:documentId,p_expected_updated_at:expectedUpdatedAt,p_rates:rates});
+    if(error)throw error; return data;
   },
 
   // ── Customers ──────────────────────────────────────────────
