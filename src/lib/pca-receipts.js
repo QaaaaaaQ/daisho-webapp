@@ -113,6 +113,7 @@ export function pcaReceiptsToCSV(documents, products, fromMonth, toMonth) {
   }
   const rows = [];
   const skippedDocuments = [];
+  const amountMismatchDocuments = [];
   (documents || []).filter(doc => doc?.docType === '領収書' && !doc.voidedAt).forEach(doc => {
     const date = normalizeDate(doc.date);
     if (!date || date.slice(0, 7) < fromMonth || date.slice(0, 7) > toMonth) return;
@@ -141,12 +142,19 @@ export function pcaReceiptsToCSV(documents, products, fromMonth, toMonth) {
     allocateTax(lines, 10);
     const detailTotal = lines.reduce((sum, line) => sum + line.gross, 0);
     if (!Number.isSafeInteger(Number(doc.amount)) || Number(doc.amount) <= 0 || Number(doc.amount) !== detailTotal) {
-      throw new Error(`領収金額と明細合計が一致しません: ${doc.docNo || doc.customer || '領収書'}`);
+      amountMismatchDocuments.push({
+        docNo: doc.docNo || '',
+        customer: doc.customer || '',
+        receiptAmount: Number(doc.amount) || 0,
+        detailTotal,
+      });
+      return;
     }
     rows.push(...lines.map(line => receiptRow(doc, line)));
   });
   return {
     csv: rows.map(row => row.map(quoteCell).join(',')).join('\r\n') + (rows.length ? '\r\n' : ''),
     skippedDocuments,
+    amountMismatchDocuments,
   };
 }

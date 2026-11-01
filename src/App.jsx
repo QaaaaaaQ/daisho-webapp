@@ -575,10 +575,14 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
     if (pcaReceiptDownloading) return;
     setPcaReceiptDownloading(true);
     try {
-      const { csv, skippedDocuments } = pcaReceiptsToCSV(history, products, pcaFromMonth, pcaToMonth);
+      const { csv, skippedDocuments, amountMismatchDocuments } = pcaReceiptsToCSV(history, products, pcaFromMonth, pcaToMonth);
+      const skippedNotices = [
+        ...skippedDocuments.map(d=>`明細未登録のため未出力: ${d.docNo}。明細を登録後に再出力してください。`),
+        ...amountMismatchDocuments.map(d=>`金額不一致のため未出力: ${d.docNo}（領収金額 ¥${fm(d.receiptAmount)} / 明細合計 ¥${fm(d.detailTotal)}）。原票を確認してください。`),
+      ];
       if (!csv) {
-        alert(skippedDocuments.length
-          ? `明細がないため領収書PCA仕訳を出力できません。明細を登録してください: ${skippedDocuments.map(d=>d.docNo).join("、")}`
+        alert(skippedNotices.length
+          ? `出力できる領収書がありません。\n${skippedNotices.join("\n")}`
           : "指定期間に出力できる領収書がありません。");
         return;
       }
@@ -592,9 +596,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       const count = csv.trimEnd().split("\r\n").length;
-      const skippedNotice = skippedDocuments.length
-        ? `\n明細がないため未出力: ${skippedDocuments.map(d=>d.docNo).join("、")}。明細登録後に再出力してください。`
-        : "";
+      const skippedNotice = skippedNotices.length ? `\n${skippedNotices.join("\n")}` : "";
       alert(`PCA領収書仕訳CSVを出力しました（${count}明細）。${skippedNotice}`);
     } catch(e) {
       alert("PCA領収書仕訳CSVを作成できません: " + (e?.message || String(e)));

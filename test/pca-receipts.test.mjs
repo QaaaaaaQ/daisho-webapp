@@ -59,6 +59,7 @@ test('PCA receipt export skips amount-only receipts and reports them for detail 
   ], products, '2026-10', '2026-10');
   assert.equal(result.csv.trimEnd().split('\r\n').length, 1);
   assert.deepEqual(result.skippedDocuments, [{ docNo: 'REC-ONLY-AMOUNT', customer: 'ヒマココ合同会社' }]);
+  assert.deepEqual(result.amountMismatchDocuments, []);
 });
 
 test('PCA receipt export uses the receipt date for the selected period', () => {
@@ -67,11 +68,28 @@ test('PCA receipt export uses the receipt date for the selected period', () => {
   assert.deepEqual(result.skippedDocuments, []);
 });
 
-test('PCA receipt export stops when the receipt amount differs from the detailed taxable total', () => {
-  assert.throws(
-    () => pcaReceiptsToCSV([{ ...receipt, amount: 120 }], products, '2026-10', '2026-10'),
-    /領収金額.*明細合計/,
-  );
+test('PCA receipt export skips a receipt whose saved amount differs from the detail total and reports both amounts', () => {
+  const mismatchedReceipt = {
+    ...receipt,
+    docNo: 'REC-0372479105',
+    customer: '旭',
+    amount: 16600,
+    items: [{ productId: 'product-puffer', name: '真河豚刺身', qty: 40, amount: 20000, taxRate: 8, taxIncluded: true }],
+  };
+  const result = pcaReceiptsToCSV([receipt, mismatchedReceipt], products, '2026-10', '2026-10');
+  assert.equal(result.csv.trimEnd().split('\r\n').length, 1);
+  assert.deepEqual(result.skippedDocuments, []);
+  assert.deepEqual(result.amountMismatchDocuments, [{
+    docNo: 'REC-0372479105', customer: '旭', receiptAmount: 16600, detailTotal: 20000,
+  }]);
+});
+
+test('PCA receipt export returns no CSV when every receipt amount conflicts with its details', () => {
+  const result = pcaReceiptsToCSV([{ ...receipt, docNo: 'REC-MISMATCH', amount: 120 }], products, '2026-10', '2026-10');
+  assert.equal(result.csv, '');
+  assert.deepEqual(result.amountMismatchDocuments, [{
+    docNo: 'REC-MISMATCH', customer: 'ヒマココ合同会社', receiptAmount: 120, detailTotal: 108,
+  }]);
 });
 
 test('PCA receipt export matches portion and preparation variants to a unique product-master category', () => {
