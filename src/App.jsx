@@ -512,6 +512,12 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
   const [pcaFromMonth, setPcaFromMonth] = useState(tod().slice(0, 7));
   const [pcaToMonth, setPcaToMonth] = useState(tod().slice(0, 7));
   const [taxRates,setTaxRates]=useState([]);
+  useEffect(()=>{
+    if(!sel)return;
+    const latest=(history||[]).find(doc=>doc.id===sel.id);
+    if(!latest){setSel(null);return;}
+    if(latest.updatedAt!==sel.updatedAt){setSel(latest);setTaxRates((latest.items||[]).map(i=>Number(i.taxRate)||0));}
+  },[history,sel]);
   const pcaReceiptIssues = useMemo(() => {
     if (!pcaFromMonth || !pcaToMonth || pcaFromMonth > pcaToMonth) return new Map();
     return new Map(getPcaReceiptIssues(history, products, pcaFromMonth, pcaToMonth)

@@ -13,6 +13,7 @@ test.before(async()=>{
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101000000_operations_modules.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101031605_pca_manual_payment_and_account_mapping.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101032348_disable_payment_csv_import.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261101074511_sync_reserved_document_changes.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
@@ -45,7 +46,44 @@ test('reserve shipment mode is stored when a delivery document is created',async
 test('authenticated document creation is restricted to the atomic workflow RPC',async()=>{
   assert.equal((await pg.query("SELECT has_table_privilege('authenticated','public.documents','INSERT') allowed")).rows[0].allowed,false);
   assert.equal((await pg.query("SELECT has_table_privilege('authenticated','public.documents','UPDATE') allowed")).rows[0].allowed,false);
-  assert.equal((await pg.query("SELECT qual FROM pg_policies WHERE tablename='documents' AND policyname='documents_read_authenticated'")).rows[0].qual,'true');
+  assert.match((await pg.query("SELECT qual FROM pg_policies WHERE tablename='documents' AND policyname='documents_read_owner_or_admin'")).rows[0].qual,/created_by.*uid/);
+});
+
+test('editing a reserved document updates reservations atomically and shipped quantities cannot change',async()=>{
+  const id=randomUUID();
+  const location=(await pg.query("SELECT id FROM inventory_locations WHERE name='主倉庫'")).rows[0].id;
+  await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[id,'Edit reserve fish','kg']);
+  await pg.query("INSERT INTO inventory_lots(product_id,location_id,lot_code,on_hand_kg,on_hand_cases) VALUES($1,$2,'EDIT',100,20)",[id,location]);
+  const doc={docType:'納品書',date:'2026-10-31',customer:'Test',stockManaged:false,inventoryMode:'reserve',items:[{productId:id,name:'Fish',unit:'kg',qty:2,caseCount:1,price:100,amount:200,taxRate:8,taxIncluded:false}]};
+  const invoke=async(action,payload)=>(await pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid) value',[action,JSON.stringify(payload),randomUUID()])).rows[0].value;
+  const created=(await invoke('create',{doc})).document;
+  doc.items[0]={...doc.items[0],qty:10,caseCount:5,amount:1000};
+  const edited=(await invoke('update',{id:created.id,expectedUpdatedAt:created.updated_at,doc})).document;
+  const reserved=(await pg.query("SELECT quantity_kg,case_count FROM inventory_reservations WHERE document_id=$1 AND status='reserved'",[created.id])).rows[0];
+  assert.equal(Number(reserved.quantity_kg),10);assert.equal(Number(reserved.case_count),5);
+  const tooMuch={...doc,items:[{...doc.items[0],qty:101,amount:10100}]};
+  await assert.rejects(invoke('update',{id:created.id,expectedUpdatedAt:edited.updated_at,doc:tooMuch}));
+  const afterFailure=(await pg.query("SELECT quantity_kg,case_count FROM inventory_reservations WHERE document_id=$1 AND status='reserved'",[created.id])).rows[0];
+  assert.equal(Number(afterFailure.quantity_kg),10);assert.equal(Number(afterFailure.case_count),5);
+  await pg.query("SELECT inventory_workflow('ship',$1::uuid,NULL::uuid,'test')",[created.id]);
+  doc.items[0]={...doc.items[0],qty:11,amount:1100};
+  await assert.rejects(invoke('update',{id:created.id,expectedUpdatedAt:edited.updated_at,doc}));
+});
+
+test('employees see their own documents and administrators see both owners',async()=>{
+  const employee=randomUUID(), other=randomUUID(), a=randomUUID(), b=randomUUID();
+  await pg.query('INSERT INTO auth.users VALUES($1,$2),($3,$4)',[employee,'one@example.invalid',other,'two@example.invalid']);
+  await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'employee'),($2,'employee')",[employee,other]);
+  await pg.query("INSERT INTO documents(id,doc_type,doc_no,customer,created_by) VALUES($1,'領収書','OWNER-A','A',$2),($3,'領収書','OWNER-B','B',$4)",[a,employee,b,other]);
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[employee]);
+  await pg.exec('SET ROLE authenticated');
+  try {
+    const visible=(await pg.query("SELECT doc_no FROM documents WHERE id=ANY($1::uuid[]) ORDER BY doc_no",[[a,b]])).rows.map(row=>row.doc_no);
+    assert.deepEqual(visible,['OWNER-A']);
+    await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]);
+    const adminVisible=(await pg.query("SELECT doc_no FROM documents WHERE id=ANY($1::uuid[]) ORDER BY doc_no",[[a,b]])).rows.map(row=>row.doc_no);
+    assert.deepEqual(adminVisible,['OWNER-A','OWNER-B']);
+  } finally { await pg.exec('RESET ROLE'); await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]); }
 });
 
 test('reserve, ship, and cancel preserve independent kg and case balances',async()=>{
