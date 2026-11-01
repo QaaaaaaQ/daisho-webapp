@@ -1,7 +1,7 @@
 const SALES_ACCOUNT = { code: '513', name: '水産売上高' };
 const RECEIVABLE_ACCOUNT = { code: '152', name: '売掛金' };
 const TAX_CODES = { 8: 'B6', 10: 'B5' };
-const SALES_SUBACCOUNT_BY_CATEGORY = {
+export const SALES_SUBACCOUNT_BY_CATEGORY = {
   'アサリ': '021',
   'アワビ': '005',
   'あんこう': '009',
