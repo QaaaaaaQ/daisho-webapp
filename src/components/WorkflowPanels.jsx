@@ -1,32 +1,26 @@
+import './home-dashboard.css';
 import {useState, useRef} from 'react';
 import {isBillable, documentStatus} from '../lib/workflow-client.js';
 const labels={home:'\u4eca\u65e5\u306e\u696d\u52d9',sale:'\u8ca9\u58f2\u30fb\u66f8\u985e\u4f5c\u6210',billing:'\u672a\u8acb\u6c42\u306e\u7d0d\u54c1\u66f8',negative:'\u30de\u30a4\u30ca\u30b9\u5728\u5eab',legacy:'\u5728\u5eab\u72b6\u614b\u8981\u78ba\u8a8d',inventory:'\u5728\u5eab\u30fb\u5165\u51fa\u5eab',recent:'\u6700\u8fd1\u306e\u66f8\u985e'};
 const button={padding:'10px 14px',border:'1px solid #cbd5e1',borderRadius:8,background:'#fff',cursor:'pointer',font:'inherit'};
-export function HomeDashboard({history,products,onNavigate}){
+export function HomeDashboard({history = [],products = [],onNavigate}) {
  const active=history.filter(d=>!d.voidedAt&&!d.convertedTo);
- const cards=[{label:labels.billing,n:active.filter(isBillable).length,tab:'history',filter:'billable'},
-  {label:labels.negative,n:products.filter(p=>Number(p.stock)<0).length,tab:'products',filter:'negative'},
-  {label:labels.legacy,n:active.filter(d=>d.stockManaged==null).length,tab:'history',filter:'review'}];
- return <section style={{padding:24,overflowY:'auto',height:'100%',boxSizing:'border-box',background:'#f8fafc'}}>
-  <p style={{fontSize:12,color:'#64748b',margin:'0 0 8px'}}>DAISHO / WORKSPACE</p>
-  <h1 style={{fontSize:24,margin:'0 0 8px'}}>{labels.home}</h1>
-  <p style={{color:'#64748b',fontSize:13}}>{'\u5bfe\u5fdc\u304c\u5fc5\u8981\u306a\u66f8\u985e\u3068\u5728\u5eab\u3092\u78ba\u8a8d\u3057\u307e\u3059\u3002'}</p>
-  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(190px,1fr))',gap:14,margin:'20px 0'}}>
-   {cards.map(c=><button key={c.label} style={{...button,textAlign:'left',padding:20}} onClick={()=>onNavigate(c.tab,c.filter)}>
-    <span style={{display:'block',fontSize:12,color:'#64748b'}}>{c.label}</span><strong style={{display:'block',fontSize:30,marginTop:10}}>{c.n}<small style={{fontSize:12,marginLeft:8}}>{'\u4ef6'}</small></strong>
-   </button>)}
-  </div>
-  <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:22}}>
-   <button style={{...button,background:'#1a2744',color:'#fff'}} onClick={()=>onNavigate('chat')}>{labels.sale}</button>
-   <button style={button} onClick={()=>onNavigate('products')}>{labels.inventory}</button>
-  </div>
-  <div style={{padding:14,background:'#fff7ed',borderRadius:8,fontSize:12,color:'#9a3412',marginBottom:22}}>
-   {'\u65e7\u66f8\u985e\u306e\u5728\u5eab\u306f\u81ea\u52d5\u88dc\u6b63\u3057\u307e\u305b\u3093\u3002\u672a\u78ba\u8a8d\u306e\u8a18\u9332\u306f\u5165\u51fa\u5eab\u5c65\u6b74\u3068\u7167\u5408\u3057\u3066\u304f\u3060\u3055\u3044\u3002'}
-  </div>
-  <h3 style={{fontSize:14}}>{labels.recent}</h3>
-  <div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:10,overflow:'hidden'}}>
-   {history.slice(0,8).map(d=><div key={d.id} style={{display:'flex',justifyContent:'space-between',gap:12,padding:'12px 16px',borderBottom:'1px solid #f1f5f9',fontSize:12}}><span>{d.date} / {d.customer}<br/><span style={{color:'#64748b'}}>{d.docType} {d.docNo}</span></span><span>{documentStatus(d)}</span></div>)}
-   {!history.length&&<p style={{padding:16,color:'#64748b'}}>{'\u767b\u9332\u3055\u308c\u305f\u66f8\u985e\u306f\u3042\u308a\u307e\u305b\u3093\u3002'}</p>}
+ const cards=[
+  {label:labels.billing,n:active.filter(isBillable).length,tab:'history',filter:'billable',index:'01',caption:'請求待ちの納品書',tone:'ink'},
+  {label:labels.negative,n:products.filter(p=>Number(p.stock)<0).length,tab:'products',filter:'negative',index:'02',caption:'残数を確認する商品',tone:'clay'},
+  {label:labels.legacy,n:active.filter(d=>d.stockManaged==null).length,tab:'history',filter:'review',index:'03',caption:'過去の入出庫を確認',tone:'sage'},
+ ];
+ const today=new Intl.DateTimeFormat('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'short'}).format(new Date());
+ return <section className="home-dashboard" aria-label="今日の業務">
+  <div className="home-wrap">
+   <header className="home-top"><div className="home-brand"><span className="home-brand-mark" aria-hidden="true">大</span><span>神戸大商 <i /> <small>WORKSPACE</small></span></div><div className="home-date"><span className="home-live" /> {today}</div></header>
+   <div className="home-intro"><div><p className="home-eyebrow"><span>01</span> DAILY OVERVIEW</p><h1>今日の業務を、<br/><em>ひと目で。</em></h1><p className="home-description">書類と在庫の状況を確認して、<br className="home-mobile-break"/>次の作業へ進みましょう。</p></div><div className="home-intro-art" aria-hidden="true"><span className="home-art-ring home-art-ring-one"/><span className="home-art-ring home-art-ring-two"/><span className="home-art-label">KOBE<br/>DAISHO <b>↗</b></span></div></div>
+   <div className="home-section-heading"><div><span className="home-section-number">01 /</span><h2>確認すること</h2></div><span className="home-section-sub">YOUR PRIORITIES</span></div>
+   <div className="home-cards">{cards.map(c=><button key={c.index} className={'home-card home-card--'+c.tone} onClick={()=>onNavigate(c.tab,c.filter)}><span className="home-card-top"><span>{c.index} / CHECK</span><span className="home-card-arrow" aria-hidden="true">↗</span></span><span className="home-card-label">{c.label}</span><span className="home-card-bottom"><span className="home-card-count">{String(c.n).padStart(2,'0')}<small>件</small></span><span className="home-card-caption">{c.caption}</span></span></button>)}</div>
+   <div className="home-lower"><div className="home-recent"><div className="home-section-heading home-section-heading--recent"><div><span className="home-section-number">02 /</span><h2>{labels.recent}</h2></div><button className="home-link" onClick={()=>onNavigate('history')}>履歴をすべて見る <span aria-hidden="true">↗</span></button></div>
+    <div className="home-list">{history.slice(0,8).map(d=><div key={d.id} className="home-record"><div className="home-record-icon" aria-hidden="true">{d.docType==='請求書'?'請':d.docType==='領収書'?'領':d.docType==='見積書'?'見':'納'}</div><div className="home-record-main"><strong>{d.customer||'取引先未設定'}</strong><span>{d.docType} <i>·</i> {d.docNo}</span></div><div className="home-record-side"><time>{d.date}</time><span>{documentStatus(d)}</span></div></div>)}{!history.length&&<p className="home-empty">まだ書類はありません。<br/>書類を作成すると、ここに表示されます。</p>}</div>
+   </div><aside className="home-aside"><div className="home-section-heading home-section-heading--aside"><div><span className="home-section-number">03 /</span><h2>クイック操作</h2></div></div><p className="home-aside-copy">いつもの作業を、<br/>ここから。</p><button className="home-action home-action--primary" onClick={()=>onNavigate('chat')}><span><small>CREATE DOCUMENT</small>{labels.sale}</span><b aria-hidden="true">↗</b></button><button className="home-action" onClick={()=>onNavigate('products')}><span><small>INVENTORY</small>{labels.inventory}</span><b aria-hidden="true">↗</b></button><div className="home-note"><span aria-hidden="true">i</span><p>旧書類の在庫は自動補正されません。未確認の記録は入出庫履歴と照合してください。</p></div></aside></div>
+   <footer className="home-footer"><span>DAISHO WORKSPACE</span><span>日々の仕事を、確かに。</span><span>神戸大商</span></footer>
   </div>
  </section>;
 }
