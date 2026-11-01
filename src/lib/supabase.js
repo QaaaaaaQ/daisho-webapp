@@ -53,7 +53,6 @@ export const db = {
     if (!data) return null;
     return { name: data.name, manager: data.manager, addr: data.addr, tel: data.tel, fax: data.fax,
       regNo: data.reg_no, bankA: data.bank_a, bankB: data.bank_b, adminEmails: data.admin_emails || "",
-      pcaBankAccountCode:data.pca_bank_account_code||"", pcaBankSubaccountCode:data.pca_bank_subaccount_code||"", pcaReceivableAccountCode:data.pca_receivable_account_code||"",
       sealImg: data.seal_img || "", personSealImg: data.person_seal_img || "", logoImg: data.logo_img || "", _id: data.id };
   },
   async saveCompany(co) {
@@ -61,7 +60,6 @@ export const db = {
     if (findError) throw findError;
     const payload = { name: co.name, manager: co.manager, addr: co.addr, tel: co.tel, fax: co.fax,
       reg_no: co.regNo, bank_a: co.bankA, bank_b: co.bankB, admin_emails: co.adminEmails || "",
-      pca_bank_account_code:co.pcaBankAccountCode||"", pca_bank_subaccount_code:co.pcaBankSubaccountCode||"", pca_receivable_account_code:co.pcaReceivableAccountCode||"",
       seal_img: co.sealImg || null, person_seal_img: co.personSealImg || null, logo_img: co.logoImg || null };
     if (ex) { const { error } = await supabase.from("company_settings").update(payload).eq("id", ex.id).select("id").single(); if (error) throw error; }
     else { const { error } = await supabase.from("company_settings").insert([payload]); if (error) throw error; }
