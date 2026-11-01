@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS company_settings (
   reg_no      TEXT DEFAULT 'T4120001218286',
   bank_a      TEXT DEFAULT 'りそな銀行　新大阪駅前支店　普通0436583',
   bank_b      TEXT DEFAULT '三井住友銀行　神戸営業部　普通預金1663502',
+  pca_bank_account_code TEXT NOT NULL DEFAULT '',
+  pca_bank_subaccount_code TEXT NOT NULL DEFAULT '',
+  pca_receivable_account_code TEXT NOT NULL DEFAULT '',
   admin_emails TEXT DEFAULT 'shin@kobedaisho.com',
   updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
@@ -150,6 +153,7 @@ CREATE TABLE IF NOT EXISTS customers (
   tel         TEXT,
   bank        TEXT,
   due_days    INTEGER DEFAULT 30,
+  pca_subaccount_code TEXT NOT NULL DEFAULT '',
   note        TEXT,
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
