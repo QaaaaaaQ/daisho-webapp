@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pcaInvoicesToCSV } from '../src/lib/pca-sales.js';
 
-const customer = { name: '株式会社 神戸大商', pcaSubaccountCode: '001' };
+const customer = { name: '株式会社 神戸大商', code: '7061', pcaSubaccountCode: 'wrong-legacy-value' };
 const products = [{ id: 'product-puffer', name: '真河豚', category: 'ふぐ類' }];
 const invoice = {
   docType: '請求書',
@@ -27,14 +27,14 @@ function parseCsvRow(line) {
   return values;
 }
 
-test('PCA sales export builds the 45-column invoice journal using the line date and customer subaccount', () => {
+test('PCA sales export builds the 45-column invoice journal using the customer master code', () => {
   const [line] = pcaInvoicesToCSV([invoice], [customer], products, '2026-10', '2026-10').trimEnd().split('\r\n');
   const fields = parseCsvRow(line);
   assert.equal(fields.length, 45);
   assert.equal(fields[0], '20261003');
   assert.equal(fields[2], '21');
   assert.equal(fields[7], '152');
-  assert.equal(fields[9], '001');
+  assert.equal(fields[9], '7061');
   assert.equal(fields[13], '108');
   assert.equal(fields[16], '601');
   assert.equal(fields[18], '513');
@@ -87,5 +87,13 @@ test('PCA sales export stops when a line cannot be matched to a categorized mast
   assert.throws(
     () => pcaInvoicesToCSV([invoice], [customer], [], '2026-10', '2026-10'),
     /商品マスターの分類.*真河豚/,
+  );
+});
+
+test('PCA sales export requires the customer master code', () => {
+  const customerWithoutCode = { name: customer.name, pcaSubaccountCode: '001' };
+  assert.throws(
+    () => pcaInvoicesToCSV([invoice], [customerWithoutCode], products, '2026-10', '2026-10'),
+    /顧客マスターのコード未入力.*株式会社 神戸大商/,
   );
 });

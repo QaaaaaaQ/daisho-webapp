@@ -995,7 +995,6 @@ function CustomersView({ customers, setCustomers }) {
         <Field label="担当者"><input style={INP} value={f.contact||""} onChange={e=>upd("contact",e.target.value)}/></Field>
         <Field label="TEL"><input style={INP} value={f.tel||""} onChange={e=>upd("tel",e.target.value)}/></Field>
         <Field label="支払いサイト（日）"><input style={INP} type="number" value={f.dueDays||30} onChange={e=>upd("dueDays",e.target.value)}/></Field>
-        <Field label="PCA補助コード"><input style={INP} value={f.pcaSubaccountCode||""} onChange={e=>upd("pcaSubaccountCode",e.target.value)} placeholder="PCAで登録した補助科目コード"/></Field>
       </div>
       <Field label="振込先（請求書デフォルト）"><input style={{ ...INP, marginTop:4 }} value={f.bank||""} onChange={e=>upd("bank",e.target.value)} placeholder="りそな銀行..."/></Field>
       <Field label="備考"><input style={{ ...INP, marginTop:4 }} value={f.note||""} onChange={e=>upd("note",e.target.value)}/></Field>
