@@ -1,18 +1,10 @@
+import { SALES_SUBACCOUNT_BY_CATEGORY, productForItem } from './pca-products.js';
+export { SALES_SUBACCOUNT_BY_CATEGORY } from './pca-products.js';
+import { allocatePcaTax } from './pca-allocation.js';
 const SALES_ACCOUNT = { code: '513', name: '水産売上高' };
 const RECEIVABLE_ACCOUNT = { code: '152', name: '売掛金' };
 const TAX_CODES = { 8: 'B6', 10: 'B5' };
-export const SALES_SUBACCOUNT_BY_CATEGORY = {
-  'アサリ': '021',
-  'アワビ': '005',
-  'あんこう': '009',
-  'うなぎ': '011',
-  'サザエ': '002',
-  'ふぐ類': '008',
-  'ホタテ': '020',
-  '蛤': '003',
-  '蟹類': '016',
-  '赤貝': '001',
-};
+
 
 function normalizeName(value) {
   return String(value || '').normalize('NFKC').replace(/[\s　]/g, '').trim();
@@ -40,14 +32,6 @@ function normalizeDate(value) {
   return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
 }
 
-function productForItem(item, products) {
-  const linked = (products || []).find(product => product.id === item.productId);
-  if (linked) return linked;
-  const name = normalizeName(item.name);
-  const matches = (products || []).filter(product => normalizeName(product.name) === name);
-  return matches.length === 1 ? matches[0] : null;
-}
-
 function departmentForItem(item) {
   const name = normalizeName(item?.name);
   if (/サザエ/.test(name)) return '102';
@@ -56,41 +40,14 @@ function departmentForItem(item) {
   return '601';
 }
 
-function allocateTax(rows, rate) {
-  const rateRows = rows.filter(row => row.rate === rate);
-  if (!rateRows.length) return;
-  const includedGrossTotal = rateRows.filter(row => row.included).reduce((sum, row) => sum + row.originalAmount, 0);
-  const excludedNetTotal = rateRows.filter(row => !row.included).reduce((sum, row) => sum + row.originalAmount, 0);
-  const includedNetTotal = includedGrossTotal - Math.round(includedGrossTotal * rate / (100 + rate));
-  const taxableNetTotal = includedNetTotal + excludedNetTotal;
-  const taxTotal = includedGrossTotal && !excludedNetTotal
-    ? includedGrossTotal - includedNetTotal
-    : Math.round(taxableNetTotal * rate / 100);
-  const weights = rateRows.map(row => row.included
-    ? row.originalAmount - Math.round(row.originalAmount * rate / (100 + rate))
-    : row.originalAmount);
-  const weightTotal = weights.reduce((sum, value) => sum + value, 0);
-  const allocations = weights.map((weight, index) => {
-    const exact = weightTotal ? taxTotal * weight / weightTotal : 0;
-    return { index, tax: Math.floor(exact), remainder: exact - Math.floor(exact) };
-  });
-  let remaining = taxTotal - allocations.reduce((sum, row) => sum + row.tax, 0);
-  allocations.slice().sort((a, b) => b.remainder - a.remainder || a.index - b.index)
-    .slice(0, remaining).forEach(row => { allocations[row.index].tax += 1; });
-
-  rateRows.forEach((row, index) => {
-    row.tax = allocations[index].tax;
-    row.gross = row.included ? row.originalAmount : row.originalAmount + row.tax;
-  });
-}
-
 function rowsForInvoice(doc, products, fromMonth, toMonth) {
-  const candidates = (doc.items || [])
+  const dated = (doc.items || [])
     .filter(item => item && !item.receiptTaxSummary && (String(item.name || '').trim() || Number(item.amount || 0) !== 0))
-    .map(item => ({ item, date: normalizeDate(item.date || doc.date) }))
-    .filter(row => row.date && row.date.slice(0, 7) >= fromMonth && row.date.slice(0, 7) <= toMonth)
-    .map(row => {
+    .map(item => ({ item, date: normalizeDate(item.date || doc.date) }));
+  if (!dated.some(row => row.date && row.date.slice(0, 7) >= fromMonth && row.date.slice(0, 7) <= toMonth)) return [];
+  const candidates = dated.map(row => {
       const { item, date } = row;
+      if (!date || date.slice(0, 7) < fromMonth || date.slice(0, 7) > toMonth) return { item, date, category: null };
       const product = productForItem(item, products);
       if (!product?.category || !SALES_SUBACCOUNT_BY_CATEGORY[product.category]) {
         throw new Error(`商品マスターの分類またはPCA補助コードを確認できません: ${item.name || '明細'}`);
@@ -101,7 +58,7 @@ function rowsForInvoice(doc, products, fromMonth, toMonth) {
   if (unsupported.length) {
     throw new Error(`PCA出力に対応していない税率があります（${[...new Set(unsupported.map(({ item }) => `${Number(item.taxRate)}%`))].join('、')}）。原票を確認してください。`);
   }
-  const invalid = candidates.filter(({ item }) => !String(item.name || '').trim() || !Number.isSafeInteger(Number(item.amount)) || Number(item.amount) <= 0);
+  const invalid = candidates.filter(({ item }) => !String(item.name || '').trim() || !Number.isFinite(Number(item.amount)) || Number(item.amount) <= 0);
   if (invalid.length) throw new Error(`品名または正の明細金額が不足している請求書があります: ${doc.docNo || doc.customer || '請求書'}`);
   const calculated = candidates.map(({ item, date, category }) => ({
     item,
@@ -113,9 +70,8 @@ function rowsForInvoice(doc, products, fromMonth, toMonth) {
     tax: 0,
     gross: 0,
   }));
-  allocateTax(calculated, 8);
-  allocateTax(calculated, 10);
-  return calculated;
+  allocatePcaTax(calculated);
+  return calculated.filter(row => row.date && row.date.slice(0, 7) >= fromMonth && row.date.slice(0, 7) <= toMonth);
 }
 
 function pcaRow(doc, line, customerMaster) {

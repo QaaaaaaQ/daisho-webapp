@@ -214,12 +214,16 @@ export async function autoRegisterAndStock(doc) {
 }
 
 export async function getStockLogs(productId) {
-  const { data, error } = await supabase
-    .from("stock_logs")
-    .select("*")
-    .eq("product_id", productId)
-    .order("created_at", { ascending: false })
-    .limit(50);
-  if (error) throw error;
-  return data || [];
+  const [legacy, movements] = await Promise.all([
+    supabase.from("stock_logs").select("*").eq("product_id", productId).order("created_at", { ascending: false }).limit(50),
+    supabase.from("inventory_movements").select("*").eq("product_id", productId).in("event", ["receipt", "shipment"]).order("created_at", { ascending: false }).limit(50),
+  ]);
+  if (legacy.error) throw legacy.error;
+  if (movements.error) throw movements.error;
+  const lotLogs = (movements.data || []).map(m => ({
+    created_at: m.created_at,
+    change: Number(m.quantity_kg) * (m.event === "shipment" ? -1 : 1),
+    reason: (m.event === "shipment" ? "予約出庫" : "ロット入庫") + (m.note ? ": " + m.note : ""),
+  }));
+  return [...(legacy.data || []), ...lotLogs].sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,50);
 }

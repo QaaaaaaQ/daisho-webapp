@@ -13,6 +13,16 @@ const receipt = {
   items: [{ productId: 'product-puffer', name: '真河豚', qty: 1, amount: 108, taxRate: 8, taxIncluded: true, date: '2026-11-01' }],
 };
 
+test('mixed inclusive and exclusive receipt lines match the saved document total', () => {
+  const doc = {...receipt, amount:214, items:[
+    {productId:'product-puffer',name:'真河豚',amount:100,taxRate:8,taxIncluded:true},
+    {productId:'product-puffer',name:'真河豚',amount:106,taxRate:8,taxIncluded:false},
+  ]};
+  const result=pcaReceiptsToCSV([doc],products,'2026-10','2026-10');
+  assert.deepEqual(result.amountMismatchDocuments,[]);
+  assert.equal(result.csv.trim().split('\r\n').reduce((sum,line)=>sum+Number(parseCsvRow(line)[13]),0),214);
+});
+
 function parseCsvRow(line) {
   const values = [];
   let value = '';

@@ -27,6 +27,26 @@ function parseCsvRow(line) {
   return values;
 }
 
+test('monthly exports preserve the total allocated across the whole invoice', () => {
+  const item={...invoice.items[0],amount:106};
+  const doc={...invoice,items:[{...item,date:'2026-10-31'},{...item,date:'2026-11-01'}]};
+  const total=(from,to)=>pcaInvoicesToCSV([doc],[customer],products,from,to).trim().split('\r\n').reduce((n,line)=>n+Number(parseCsvRow(line)[13]),0);
+  assert.equal(total('2026-10','2026-11'),229);
+  assert.equal(total('2026-10','2026-10')+total('2026-11','2026-11'),229);
+});
+
+test('PCA export handles valid fractional-yen item amounts', () => {
+  const doc={...invoice,items:[{...invoice.items[0],amount:126.25,qty:1.25}]};
+  const fields=parseCsvRow(pcaInvoicesToCSV([doc],[customer],products,'2026-10','2026-10').trim());
+  assert.equal(fields[13],'136');
+});
+
+test('unrelated invoices outside the period do not block export', () => {
+  const unrelated={...invoice,docNo:'INV-OLD',items:[{...invoice.items[0],date:'2025-01-01',taxRate:0}]};
+  const csv=pcaInvoicesToCSV([unrelated,invoice],[customer],products,'2026-10','2026-10');
+  assert.equal(csv.trim().split('\r\n').length,1);
+});
+
 test('PCA sales export builds the 45-column invoice journal using the customer master code', () => {
   const [line] = pcaInvoicesToCSV([invoice], [customer], products, '2026-10', '2026-10').trimEnd().split('\r\n');
   const fields = parseCsvRow(line);
