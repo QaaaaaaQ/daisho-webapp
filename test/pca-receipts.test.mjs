@@ -73,3 +73,40 @@ test('PCA receipt export stops when the receipt amount differs from the detailed
     /領収金額.*明細合計/,
   );
 });
+
+test('PCA receipt export matches portion and preparation variants to a unique product-master category', () => {
+  const receiptProducts = [
+    { id: 'fugu-sashimi', name: '真河豚刺身', category: 'ふぐ類' },
+    { id: 'fugu-skin', name: '河豚皮', category: 'ふぐ類' },
+    { id: 'fugu-skin-raw', name: 'トラ河豚皮（生）', category: 'ふぐ類' },
+    { id: 'fugu-skin-boiled', name: '虎河豚皮ボイル', category: 'ふぐ類' },
+    { id: 'fugu-skin-cut', name: '河豚皮カット', category: 'ふぐ類' },
+  ];
+  const legacyReceipt = {
+    docType: '領収書', docNo: 'REC-100025', date: '2026-10-30', customer: '将軍',
+    description: '鮮魚代として', amount: 3240,
+    items: [
+      { name: '真河豚刺身（一人前）', qty: 5, price: 300, amount: 1500, taxRate: 8, taxIncluded: false },
+      { name: '虎河豚皮刺身', qty: 5, price: 300, amount: 1500, taxRate: 8, taxIncluded: false },
+    ],
+  };
+  const result = pcaReceiptsToCSV([legacyReceipt], receiptProducts, '2026-10', '2026-10');
+  const rows = result.csv.trimEnd().split('\r\n').map(parseCsvRow);
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every(row => row[20] === '008'));
+  assert.deepEqual(result.skippedDocuments, []);
+});
+
+test('PCA receipt export rejects a product-name variant whose master matches disagree on category', () => {
+  const conflictingProducts = [
+    { id: 'fugu', name: '真河豚刺身', category: 'ふぐ類' },
+    { id: 'shellfish', name: '虎河豚刺身', category: '蟹類' },
+  ];
+  assert.throws(
+    () => pcaReceiptsToCSV([{
+      ...receipt,
+      items: [{ name: '河豚刺身（一人前）', amount: 108, taxRate: 8, taxIncluded: true }],
+    }], conflictingProducts, '2026-10', '2026-10'),
+    /商品マスターの分類.*河豚刺身/,
+  );
+});
