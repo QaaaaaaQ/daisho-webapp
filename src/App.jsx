@@ -1,3 +1,5 @@
+import './mobile.css';
+import { initialTab } from './lib/navigation.js';
 import HistoryErrorBoundary from "./components/HistoryErrorBoundary.jsx";
 import { historyDocumentView } from "./lib/history-display.js";
 import { HomeDashboard, ShipmentChoice, VoidDocumentModal } from "./components/WorkflowPanels.jsx";
@@ -53,11 +55,11 @@ function Btn({ children, onClick, variant="ghost", disabled, style={}, small }) 
   return <button onClick={onClick} disabled={disabled} style={{ padding:small?"4px 9px":"7px 13px", borderRadius:6, cursor:disabled?"not-allowed":"pointer", fontSize:small?11:13, fontFamily:"inherit", opacity:disabled?0.5:1, ...V[variant], ...style }}>{children}</button>;
 }
 function Field({ label, children }) {
-  return <div style={{ marginBottom:10 }}><label style={{ display:"block", fontSize:11, color:"#6b7280", marginBottom:4, fontWeight:500 }}>{label}</label>{children}</div>;
+  return <div style={{ marginBottom:10 }}><label style={{ display:"block", fontSize:11, color:"#6b7280", fontWeight:500 }}><span style={{display:"block",marginBottom:4}}>{label}</span>{children}</label></div>;
 }
 function Modal({ title, onClose, children, maxW=560, tall }) {
-  return <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:12 }}>
-    <div style={{ background:"#fff", borderRadius:12, width:"100%", maxWidth:maxW, maxHeight:tall?"96vh":"90vh", overflow:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
+  return <div className="app-modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:12 }}>
+    <div className="app-modal" style={{ background:"#fff", borderRadius:12, width:"100%", maxWidth:maxW, maxHeight:tall?"96vh":"90vh", overflow:"auto", boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 18px", borderBottom:"1px solid #f0f0f0", position:"sticky", top:0, background:"#fff", zIndex:1 }}>
         <span style={{ fontWeight:600, fontSize:15 }}>{title}</span>
         <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", fontSize:22, color:"#9ca3af", lineHeight:1 }}>×</button>
@@ -87,38 +89,38 @@ function ItemsEditor({ items, products, onChange, docType="納品書" }) {
   const tx = previewTax(items);
   return <div>
     {tx.error&&<p role="alert" style={{color:"#b91c1c",fontSize:12}}>{"\u6570\u91cf\u30fb\u91d1\u984d\u306e\u5165\u529b\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044"}</p>}
-    <div style={{ overflowX:"auto" }}>
-      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, minWidth:780 }}>
+    <div className="items-scroll" style={{ overflowX:"auto" }}>
+      <table className="items-table" style={{ width:"100%", borderCollapse:"collapse", fontSize:12, minWidth:780 }}>
         <thead><tr style={{ background:N, color:"#fff" }}>
           {["日付","品名","産地","ケース","入数","数量","単位","単価","金額","税率","税種",""].map((h,i)=><th key={i} style={{ padding:"5px 6px", fontWeight:400, whiteSpace:"nowrap" }}>{h}</th>)}
         </tr></thead>
         <tbody>
           {items.map((it,i)=><tr key={i} style={{ borderBottom:"1px solid #f0f0f0" }}>
-            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:110, fontSize:11, padding:"4px 5px" }} type="date" value={it.date||""} onChange={e=>upd(i,"date",e.target.value)}/></td>
+            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:110, fontSize:11, padding:"4px 5px" }} type="date" aria-label={`明細 ${i+1} の日付`} value={it.date||""} onChange={e=>upd(i,"date",e.target.value)}/></td>
             <td style={{ padding:"3px 4px" }}>
-              <select style={{ ...SEL, width:130, fontSize:11, padding:"4px 5px" }} value={it.productId || products.find(p=>p.name===it.name)?.id || ""} onChange={e=>{ const p=products.find(x=>x.id===e.target.value); if(p) fill(i,p); else upd(i,"name",e.target.value); }}>
+              <select style={{ ...SEL, width:130, fontSize:11, padding:"4px 5px" }} aria-label={`明細 ${i+1} の品名`} value={it.productId || products.find(p=>p.name===it.name)?.id || ""} onChange={e=>{ const p=products.find(x=>x.id===e.target.value); if(p) fill(i,p); else upd(i,"name",e.target.value); }}>
                 <option value="">品名選択</option>
                 {products.map(p=><option key={p.id} value={p.id}>{[p.code,p.name,p.origin].filter(Boolean).join(" / ")}</option>)}
               </select>
             </td>
-            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:70, fontSize:11, padding:"4px 5px" }} value={it.origin||""} onChange={e=>upd(i,"origin",e.target.value)} placeholder="韓国産"/></td>
-            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:55, fontSize:11, padding:"4px 5px" }} type="number" value={it.caseCount||""} onChange={e=>upd(i,"caseCount",e.target.value)}/></td>
-            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:50, fontSize:11, padding:"4px 5px" }} type="number" value={it.qtyPerCase||""} onChange={e=>upd(i,"qtyPerCase",e.target.value)}/></td>
-            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:60, fontSize:11, padding:"4px 5px" }} type="number" value={it.qty||""} onChange={e=>upd(i,"qty",e.target.value)}/></td>
-            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:55, fontSize:11, padding:"4px 5px" }} value={it.unit||""} onChange={e=>upd(i,"unit",e.target.value)}/></td>
-            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:72, fontSize:11, padding:"4px 5px" }} type="number" value={it.price||""} onChange={e=>upd(i,"price",e.target.value)}/></td>
+            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:70, fontSize:11, padding:"4px 5px" }} aria-label={`明細 ${i+1} の産地`} value={it.origin||""} onChange={e=>upd(i,"origin",e.target.value)} placeholder="韓国産"/></td>
+            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:55, fontSize:11, padding:"4px 5px" }} type="number" aria-label={`明細 ${i+1} のケース数`} value={it.caseCount||""} onChange={e=>upd(i,"caseCount",e.target.value)}/></td>
+            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:50, fontSize:11, padding:"4px 5px" }} type="number" aria-label={`明細 ${i+1} の入数`} value={it.qtyPerCase||""} onChange={e=>upd(i,"qtyPerCase",e.target.value)}/></td>
+            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:60, fontSize:11, padding:"4px 5px" }} type="number" aria-label={`明細 ${i+1} の数量`} value={it.qty||""} onChange={e=>upd(i,"qty",e.target.value)}/></td>
+            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:55, fontSize:11, padding:"4px 5px" }} aria-label={`明細 ${i+1} の単位`} value={it.unit||""} onChange={e=>upd(i,"unit",e.target.value)}/></td>
+            <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:72, fontSize:11, padding:"4px 5px" }} type="number" aria-label={`明細 ${i+1} の単価`} value={it.price||""} onChange={e=>upd(i,"price",e.target.value)}/></td>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:78, fontSize:11, padding:"4px 5px", background:"#f3f4f6" }} type="number" value={it.amount||""} readOnly title="数量×単価から自動計算"/></td>
             <td style={{ padding:"3px 4px" }}>
-              <select style={{ ...SEL, width:62, fontSize:11, padding:"4px 5px" }} value={it.taxRate||8} onChange={e=>upd(i,"taxRate",Number(e.target.value))}>
+              <select style={{ ...SEL, width:62, fontSize:11, padding:"4px 5px" }} aria-label={`明細 ${i+1} の税率`} value={it.taxRate||8} onChange={e=>upd(i,"taxRate",Number(e.target.value))}>
                 <option value={8}>8%</option><option value={10}>10%</option>
               </select>
             </td>
             <td style={{ padding:"3px 4px" }}>
-              <select style={{ ...SEL, width:60, fontSize:11, padding:"4px 5px" }} value={it.taxIncluded?"in":"ex"} onChange={e=>upd(i,"taxIncluded",e.target.value==="in")}>
+              <select style={{ ...SEL, width:60, fontSize:11, padding:"4px 5px" }} aria-label={`明細 ${i+1} の税種`} value={it.taxIncluded?"in":"ex"} onChange={e=>upd(i,"taxIncluded",e.target.value==="in")}>
                 <option value="ex">外税</option><option value="in">内税</option>
               </select>
             </td>
-            <td style={{ padding:"3px 4px" }}><button onClick={()=>remItem(i)} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af", fontSize:16 }}>×</button></td>
+            <td style={{ padding:"3px 4px" }}><button aria-label={`明細 ${i+1} を削除`} onClick={()=>remItem(i)} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af", fontSize:16 }}>×</button></td>
           </tr>)}
         </tbody>
       </table>
@@ -187,7 +189,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
     setSaving(false);
   };
   return <Modal title={`📝 ${f.docType}を直接作成`} onClose={onClose} maxW={900} tall>
-    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
+    <div className="document-form-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
       <Field label="書類種別">
         <select style={SEL} value={f.docType} onChange={e=>{ const type=e.target.value; setF(x=>({...x,docType:type,items:(x.items||[]).map(it=>({...it,taxIncluded:type==="領収書"?true:Boolean(it.taxIncluded)}))})); }}>
           <option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option>
@@ -208,7 +210,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
     </div>
     {f.docType==="領収書"&&<div style={{ background:"#faf5ff", border:"1px solid #c4b5fd", borderRadius:8, padding:12, marginBottom:12 }}>
       <div style={{ fontWeight:500, fontSize:13, marginBottom:10, color:"#7c3aed" }}>🧾 領収書の金額・内容</div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+      <div className="receipt-form-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
         <Field label="領収金額（税込・円）*">
           <input style={{ ...INP, fontSize:15, fontWeight:500 }} type="number" value={f.amount||""} onChange={e=>upd("amount",e.target.value)} placeholder={receiptPreviewItems.length > 0 ? "空欄なら明細合計" : "例: 50000"}/>
         </Field>
@@ -250,7 +252,7 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
     try{await onSave(d);}finally{saveLock.current=false;setSaving(false);}
   };
   return <Modal title={`${d.docType} 編集`} onClose={onClose} maxW={900} tall>
-    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
+    <div className="document-form-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
       <Field label="書類種別"><select style={SEL} disabled={Boolean(d.id)} value={d.docType} onChange={e=>upd("docType",e.target.value)}><option>納品書</option><option>請求書</option><option>領収書</option><option>見積書</option></select></Field>
       <Field label="日付"><input style={INP} type="date" value={d.date||""} onChange={e=>upd("date",e.target.value)}/></Field>
       <Field label="入金期日"><input style={INP} type="date" value={d.dueDate||""} onChange={e=>upd("dueDate",e.target.value)}/></Field>
@@ -350,7 +352,7 @@ function parseReviewContext(result, question) {
   return parts.join("\n");
 }
 
-function ChatView({ co, products, customers, history, setHistory, setProducts, setCustomers, user }) {
+export function ChatView({ co, products, customers, history, setHistory, setProducts, setCustomers, user }) {
   const [msgs, setMsgs] = useState([{ role:"assistant", text:"こんにちは！\n自然な言葉で書類を作成できます。\n例：「5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書お願いします」" }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -448,12 +450,12 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
     } catch (e) { alert("編集保存エラー: " + e.message); }
   };
 
-  return <div style={{ display:"flex", flexDirection:"column", height:"100%" }}>
-    <div style={{ padding:"8px 16px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8 }}>
+  return <div className="sales-view" style={{ display:"flex", flexDirection:"column", height:"100%" }}>
+    <div className="sales-toolbar" style={{ padding:"8px 16px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8 }}>
       <Btn small variant="primary" onClick={()=>setShowDirect(true)}>📝 直接作成</Btn>
       <span style={{ fontSize:11, color:"#9ca3af", alignSelf:"center" }}>または下のチャットでAI作成</span>
     </div>
-    <div style={{ flex:1, overflowY:"auto", padding:"14px 18px", display:"flex", flexDirection:"column", gap:10 }}>
+    <div className="sales-thread" style={{ flex:1, overflowY:"auto", padding:"14px 18px", display:"flex", flexDirection:"column", gap:10 }}>
       {msgs.map((msg,i)=>{
         const isUser = msg.role==="user";
         const ds = msg.id ? docStates[msg.id] : null;
@@ -471,14 +473,14 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
       {loading&&<div style={{ display:"flex" }}><div style={{ background:"#f3f4f6", borderRadius:"12px 12px 12px 3px", padding:"9px 13px" }}><span style={{ display:"inline-flex", gap:4 }}>{[0,1,2].map(i=><span key={i} style={{ width:5, height:5, borderRadius:"50%", background:"#9ca3af", display:"inline-block", animation:"blink 1.2s infinite", animationDelay:`${i*0.2}s` }}/>)}</span></div></div>}
       <div ref={bottomRef}/>
     </div>
-    {msgs.length<=1&&<div style={{ padding:"0 18px 8px", display:"flex", gap:6, flexWrap:"wrap" }}>
+    {msgs.length<=1&&<div className="sales-suggestions" style={{ padding:"0 18px 8px", display:"flex", gap:6, flexWrap:"wrap" }}>
       {SUGG.map((s,i)=><button key={i} onClick={()=>send(s)} style={{ padding:"5px 11px", background:"#f3f4f6", border:"1px solid #e5e7eb", borderRadius:16, fontSize:11, cursor:"pointer", color:"#374151", fontFamily:"inherit" }}>{s}</button>)}
     </div>}
-    <div style={{ padding:"10px 18px", borderTop:"1px solid #f0f0f0" }}>
+    <div className="sales-composer" style={{ padding:"10px 18px", borderTop:"1px solid #f0f0f0" }}>
       <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
-        <textarea value={input} onChange={e=>setInput(e.target.value)}
-          onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(input); } }}
-          placeholder="例：5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書（Shift+Enterで改行）"
+        <textarea aria-label="メッセージ" value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing&&e.keyCode!==229){ e.preventDefault(); send(input); } }}
+          placeholder={window.innerWidth<=600 ? "取引先・商品・数量を入力" : "例：5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書（Shift+Enterで改行）"}
           style={{ flex:1, padding:"9px 11px", border:"1px solid #e5e7eb", borderRadius:8, fontSize:13, fontFamily:"inherit", outline:"none", resize:"none", minHeight:42, maxHeight:110, lineHeight:1.5 }}
           rows={1} onInput={e=>{ e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,110)+"px"; }}
         />
@@ -1150,7 +1152,7 @@ export default function App() {
   const [co, setCo] = useState(DEFAULT_CO);
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
-  const [tab, setTab] = useState("home");
+  const [tab, setTab] = useState(()=>initialTab(window.innerWidth));
   const [masterTab,setMasterTab]=useState("customers");
   const [routeFilter,setRouteFilter]=useState("");
   const [loadError,setLoadError]=useState("");
@@ -1216,8 +1218,8 @@ export default function App() {
   const todayCount = (history||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
   const TABS = [["home","\u2302","\u4eca\u65e5\u306e\u696d\u52d9"],["chat","\u270e","\u8ca9\u58f2"],["history","\u2261","\u8acb\u6c42\u30fb\u767a\u884c\u5c65\u6b74"],["products","\u25a6","\u5728\u5eab\u30fb\u5546\u54c1"],["operations","\u21c4","\u5728\u5eab\u30fb\u5165\u91d1\u9023\u643a"],["masters","\u2699","\u30de\u30b9\u30bf\u30fc\u30fb\u8a2d\u5b9a"]];
 
-  return <div style={{ display:"flex", height:"100vh", fontFamily:'"Hiragino Sans","Yu Gothic UI","Meiryo","Noto Sans CJK JP",sans-serif', background:"#f9fafb" }}>
-    <aside style={{ width:sideOpen?190:50, background:N, display:"flex", flexDirection:"column", flexShrink:0, transition:"width .18s", overflow:"hidden" }}>
+  return <div className="app-shell" style={{ display:"flex", height:"100vh", fontFamily:'"Hiragino Sans","Yu Gothic UI","Meiryo","Noto Sans CJK JP",sans-serif', background:"#f9fafb" }}>
+    <aside id="app-navigation" className={"app-sidebar"+(sideOpen?" is-open":"")} style={{ width:sideOpen?190:50, background:N, display:"flex", flexDirection:"column", flexShrink:0, transition:"width .18s", overflow:"hidden" }}>
       <div style={{ padding:"12px 10px", borderBottom:"0.5px solid rgba(255,255,255,0.1)", minWidth:190 }}>
         {sideOpen&&<div>
           {co.logoImg
@@ -1235,7 +1237,7 @@ export default function App() {
         </div>
       </div>}
       <nav style={{ flex:1, padding:"5px 0", overflowY:"auto" }}>
-        {TABS.map(([id,icon,label])=><button key={id} onClick={()=>{setRouteFilter("");setTab(id);}} style={{ display:"flex", alignItems:"center", gap:10, width:"100%", padding:"10px 11px", border:"none", cursor:"pointer", fontSize:12, background:tab===id?"rgba(255,255,255,0.12)":"transparent", color:tab===id?"#fff":"rgba(255,255,255,0.5)", borderLeft:tab===id?"3px solid #60a5fa":"3px solid transparent", textAlign:"left", fontFamily:"inherit", position:"relative" }}>
+        {TABS.map(([id,icon,label])=><button key={id} onClick={()=>{setRouteFilter("");setTab(id);if(window.innerWidth<=600)setSideOpen(false);}} style={{ display:"flex", alignItems:"center", gap:10, width:"100%", padding:"10px 11px", border:"none", cursor:"pointer", fontSize:12, background:tab===id?"rgba(255,255,255,0.12)":"transparent", color:tab===id?"#fff":"rgba(255,255,255,0.5)", borderLeft:tab===id?"3px solid #60a5fa":"3px solid transparent", textAlign:"left", fontFamily:"inherit", position:"relative" }}>
           <span style={{ fontSize:15, flexShrink:0 }}>{icon}</span>
           {sideOpen&&<span style={{ whiteSpace:"nowrap" }}>{label}</span>}
           {id==="history"&&todayCount>0&&<span style={{ position:"absolute", top:8, right:8, background:"#dc2626", color:"#fff", borderRadius:10, fontSize:10, padding:"1px 5px" }}>{todayCount}</span>}
@@ -1250,9 +1252,10 @@ export default function App() {
         </div>}
       </div>
     </aside>
-    <main style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column", background:"#fff" }}>
+    {sideOpen&&<button className="mobile-backdrop" aria-label="メニューを閉じる" onClick={()=>setSideOpen(false)}/>}
+    <main className="app-main" style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column", background:"#fff" }}>
       <div style={{ padding:"10px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", alignItems:"center", gap:8 }}>
-        <button onClick={()=>setSideOpen(x=>!x)} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af", fontSize:18, padding:4, flexShrink:0 }}>☰</button>
+        <button aria-label={sideOpen?"メニューを閉じる":"メニューを開く"} aria-expanded={sideOpen} aria-controls="app-navigation" onClick={()=>setSideOpen(x=>!x)} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af", fontSize:18, padding:4, flexShrink:0 }}>☰</button>
         <h2 style={{ fontSize:14, fontWeight:500 }}>
           {tab==="home"&&"\u4eca\u65e5\u306e\u696d\u52d9"}
           {tab==="masters"&&"\u30de\u30b9\u30bf\u30fc\u30fb\u8a2d\u5b9a"}
