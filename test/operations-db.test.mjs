@@ -15,6 +15,7 @@ test.before(async()=>{
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101032348_disable_payment_csv_import.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101080517_sync_reserved_document_changes.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101081041_revoke_legacy_workflow_rpcs.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261101083428_fix_user_list_email_type.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
@@ -56,6 +57,20 @@ test('authenticated document creation is restricted to the atomic workflow RPC',
     const result=(await pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid) value',['create',JSON.stringify(payload),randomUUID()])).rows[0].value;
     assert.equal(result.document.customer,'RPC test');
   } finally { await pg.exec('RESET ROLE'); }
+});
+
+test('an administrator can list users and change a role while an employee is denied',async()=>{
+  const employee=randomUUID();
+  await pg.query('INSERT INTO auth.users VALUES($1,$2)',[employee,'permission-test@example.invalid']);
+  let users=(await pg.query('SELECT * FROM public.list_app_users()')).rows;
+  assert.equal(users.find(u=>u.user_id===employee)?.role,'employee');
+  await pg.query("SELECT public.set_user_role($1,'admin')",[employee]);
+  users=(await pg.query('SELECT * FROM public.list_app_users()')).rows;
+  assert.equal(users.find(u=>u.user_id===employee)?.role,'admin');
+  await pg.query("SELECT public.set_user_role($1,'employee')",[employee]);
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[employee]);
+  try { await assert.rejects(pg.query('SELECT * FROM public.list_app_users()')); }
+  finally { await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]); }
 });
 
 test('editing a reserved document updates reservations atomically and shipped quantities cannot change',async()=>{
