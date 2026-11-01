@@ -10,6 +10,7 @@ import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, 
 import { generateAndDownloadPDF, calcTax } from "./lib/pdf";
 import { downloadDocumentsCSV } from "./lib/csv";
 import { pcaInvoicesToCSV } from "./lib/pca-sales.js";
+import { pcaReceiptsToCSV } from "./lib/pca-receipts.js";
 import { draftItem, localDate, validItems, validateDocument, documentTotal } from "./lib/domain";
 
 const tod = () => localDate();
@@ -507,6 +508,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
   const [batchBank, setBatchBank] = useState(co.bankA||"");
   const [bulkDownloading, setBulkDownloading] = useState(false);
   const [pcaDownloading, setPcaDownloading] = useState(false);
+  const [pcaReceiptDownloading, setPcaReceiptDownloading] = useState(false);
   const [pcaFromMonth, setPcaFromMonth] = useState(tod().slice(0, 7));
   const [pcaToMonth, setPcaToMonth] = useState(tod().slice(0, 7));
   const [taxRates,setTaxRates]=useState([]);
@@ -566,6 +568,38 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       alert("PCA売上仕訳CSVを作成できません: " + (e?.message || String(e)));
     } finally {
       setPcaDownloading(false);
+    }
+  };
+
+  const downloadPcaReceipts = () => {
+    if (pcaReceiptDownloading) return;
+    setPcaReceiptDownloading(true);
+    try {
+      const { csv, skippedDocuments } = pcaReceiptsToCSV(history, products, pcaFromMonth, pcaToMonth);
+      if (!csv) {
+        alert(skippedDocuments.length
+          ? `明細がないため領収書PCA仕訳を出力できません。明細を登録してください: ${skippedDocuments.map(d=>d.docNo).join("、")}`
+          : "指定期間に出力できる領収書がありません。");
+        return;
+      }
+      const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `PCA仕訳_領収書_${pcaFromMonth}-${pcaToMonth}_${tod()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const count = csv.trimEnd().split("\r\n").length;
+      const skippedNotice = skippedDocuments.length
+        ? `\n明細がないため未出力: ${skippedDocuments.map(d=>d.docNo).join("、")}。明細登録後に再出力してください。`
+        : "";
+      alert(`PCA領収書仕訳CSVを出力しました（${count}明細）。${skippedNotice}`);
+    } catch(e) {
+      alert("PCA領収書仕訳CSVを作成できません: " + (e?.message || String(e)));
+    } finally {
+      setPcaReceiptDownloading(false);
     }
   };
 
@@ -651,15 +685,18 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       <span style={{ fontSize:11, color:"#9ca3af", whiteSpace:"nowrap" }}>{filt.length + "件 / 本日" + totalToday + "件"}</span>
     </div>
     <div style={{ padding:"8px 18px", borderBottom:"1px solid #dbeafe", background:"#f8fbff", display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-      <span style={{ fontSize:12, fontWeight:600, color:N }}>売上データ出力</span>
-      <span style={{ fontSize:11, color:"#64748b" }}>請求書の明細日付で期間指定</span>
+      <span style={{ fontSize:12, fontWeight:600, color:N }}>PCA仕訳データ出力</span>
+      <span style={{ fontSize:11, color:"#64748b" }}>請求書は明細日付・領収書は書類日付で期間指定</span>
       <input aria-label="PCA売上出力の開始月" type="month" value={pcaFromMonth} onChange={e=>setPcaFromMonth(e.target.value)} style={{ ...INP, width:132, padding:"5px 6px", fontSize:11 }}/>
       <span>〜</span>
       <input aria-label="PCA売上出力の終了月" type="month" value={pcaToMonth} onChange={e=>setPcaToMonth(e.target.value)} style={{ ...INP, width:132, padding:"5px 6px", fontSize:11 }}/>
       <Btn small variant="blue" onClick={downloadPcaSales} disabled={pcaDownloading||!pcaFromMonth||!pcaToMonth} title="請求書の売上明細をPCA仕訳CSVへ変換">
         {pcaDownloading?"⏳ PCA CSV作成中...":"📤 PCA仕訳CSVを出力（45列）"}
       </Btn>
-      <span style={{ flexBasis:"100%", fontSize:11, color:"#64748b" }}>売上補助科目コードは商品マスターの分類から決定します。</span>
+      <Btn small variant="blue" onClick={downloadPcaReceipts} disabled={pcaReceiptDownloading||!pcaFromMonth||!pcaToMonth} title="領収書の明細をPCA仕訳CSVへ変換">
+        {pcaReceiptDownloading?"⏳ PCA CSV作成中...":"📤 領収書PCA仕訳CSV（45列）"}
+      </Btn>
+      <span style={{ flexBasis:"100%", fontSize:11, color:"#64748b" }}>売上補助科目コードは商品マスターの分類から決定します。明細未登録の領収書は除外してお知らせします。</span>
     </div>
     {batchMode&&checkedList.length>0&&<div style={{ padding:"8px 18px", background:"#eff6ff", borderBottom:"1px solid #bfdbfe", fontSize:12 }}>
       {checkedCustomers.length===1
