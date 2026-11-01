@@ -5,12 +5,12 @@ import { isBillable, documentStatus } from "./lib/workflow-client.js";
 import { documentTax } from "./lib/money.js";
 import { confirmLegacyPdfAmounts, taxCorrectionPreview } from "./lib/operations.js";
 import { OperationsView } from "./components/OperationsPanels.jsx";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs, receiveStock } from "./lib/supabase";
 import { generateAndDownloadPDF, calcTax } from "./lib/pdf";
 import { downloadDocumentsCSV } from "./lib/csv";
 import { pcaInvoicesToCSV } from "./lib/pca-sales.js";
-import { pcaReceiptsToCSV } from "./lib/pca-receipts.js";
+import { getPcaReceiptIssues, pcaReceiptsToCSV } from "./lib/pca-receipts.js";
 import { draftItem, localDate, validItems, validateDocument, documentTotal } from "./lib/domain";
 
 const tod = () => localDate();
@@ -512,6 +512,11 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
   const [pcaFromMonth, setPcaFromMonth] = useState(tod().slice(0, 7));
   const [pcaToMonth, setPcaToMonth] = useState(tod().slice(0, 7));
   const [taxRates,setTaxRates]=useState([]);
+  const pcaReceiptIssues = useMemo(() => {
+    if (!pcaFromMonth || !pcaToMonth || pcaFromMonth > pcaToMonth) return new Map();
+    return new Map(getPcaReceiptIssues(history, products, pcaFromMonth, pcaToMonth)
+      .map(issue => [issue.documentId || issue.docNo, issue.message]));
+  }, [history, products, pcaFromMonth, pcaToMonth]);
 
   const viewFor = doc => historyDocumentView(doc);
   const canBill = doc => isBillable(doc) && !viewFor(doc).issue;
@@ -698,7 +703,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       <Btn small variant="blue" onClick={downloadPcaReceipts} disabled={pcaReceiptDownloading||!pcaFromMonth||!pcaToMonth} title="領収書の明細をPCA仕訳CSVへ変換">
         {pcaReceiptDownloading?"⏳ PCA CSV作成中...":"📤 領収書PCA仕訳CSV（45列）"}
       </Btn>
-      <span style={{ flexBasis:"100%", fontSize:11, color:"#64748b" }}>売上補助科目コードは商品マスターの分類から決定します。明細未登録の領収書は除外してお知らせします。</span>
+      <span style={{ flexBasis:"100%", fontSize:11, color:"#64748b" }}>売上補助科目コードは商品マスターの分類から決定します。PCA出力できない領収書は履歴の各明細に理由を表示します。</span>
     </div>
     {batchMode&&checkedList.length>0&&<div style={{ padding:"8px 18px", background:"#eff6ff", borderBottom:"1px solid #bfdbfe", fontSize:12 }}>
       {checkedCustomers.length===1
@@ -714,6 +719,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       {filt.map(h=>{
         const view = viewFor(h);
         const isChecked = !!checked[h.id];
+        const pcaReceiptIssue = pcaReceiptIssues.get(h.id || h.docNo);
         return <div key={h.id} onClick={()=>{if(!batchMode){setSel(h);setTaxRates((h.items||[]).map(i=>Number(i.taxRate)||0));}}}
           style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 18px", borderBottom:"1px solid #f9f9f9", cursor:batchMode?"default":"pointer", background:isChecked?"#eff6ff":sel?.id===h.id?"#f9fafb":"transparent" }}>
           {batchMode&&<input type="checkbox" checked={isChecked} disabled={!canBill(h)} onChange={e=>toggleCheck(h.id,e)} style={{ width:16, height:16, cursor:h.docType==="納品書"?"pointer":"not-allowed", flexShrink:0 }}/>}
@@ -721,6 +727,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ fontWeight:500, fontSize:13 }}>{h.customer} <span style={{fontSize:10,color:h.voidedAt?"#b91c1c":"#64748b",fontWeight:400}}>{documentStatus(h)}</span></div>
             <div style={{ fontSize:11, color:"#9ca3af" }}>{h.docNo + " • " + h.date + (h.subject?" • "+h.subject:"")}</div>
+            {h.docType==="領収書"&&pcaReceiptIssue&&<div role="status" style={{ fontSize:11, color:"#b45309", marginTop:3 }}>⚠️ PCA未出力：{pcaReceiptIssue}</div>}
           </div>
           <div style={{ textAlign:"right", flexShrink:0 }}>
             <div style={{ fontWeight:500, fontSize:13 }}>{amountLabel(view)}</div>

@@ -158,3 +158,26 @@ export function pcaReceiptsToCSV(documents, products, fromMonth, toMonth) {
     amountMismatchDocuments,
   };
 }
+
+export function getPcaReceiptIssues(documents, products, fromMonth, toMonth) {
+  const issues = [];
+  (documents || []).forEach(doc => {
+    if (doc?.docType !== '領収書' || doc.voidedAt) return;
+    try {
+      const result = pcaReceiptsToCSV([doc], products, fromMonth, toMonth);
+      const mismatch = result.amountMismatchDocuments[0];
+      if (mismatch) {
+        issues.push({
+          documentId: doc.id,
+          docNo: doc.docNo || '',
+          message: `領収金額 ¥${mismatch.receiptAmount.toLocaleString('ja-JP')} / 明細合計 ¥${mismatch.detailTotal.toLocaleString('ja-JP')}`,
+        });
+      } else if (result.skippedDocuments.length) {
+        issues.push({ documentId: doc.id, docNo: doc.docNo || '', message: '明細未登録のためPCA出力できません' });
+      }
+    } catch (error) {
+      issues.push({ documentId: doc.id, docNo: doc.docNo || '', message: error?.message || String(error) });
+    }
+  });
+  return issues;
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pcaReceiptsToCSV } from '../src/lib/pca-receipts.js';
+import { getPcaReceiptIssues, pcaReceiptsToCSV } from '../src/lib/pca-receipts.js';
 
 const products = [{ id: 'product-puffer', name: '真河豚', category: 'ふぐ類' }];
 const receipt = {
@@ -127,4 +127,27 @@ test('PCA receipt export rejects a product-name variant whose master matches dis
     }], conflictingProducts, '2026-10', '2026-10'),
     /商品マスターの分類.*河豚刺身/,
   );
+});
+
+test('history PCA receipt issues explain amount mismatches and missing details per document', () => {
+  const issues = getPcaReceiptIssues([
+    { ...receipt, id: 'valid', docNo: 'REC-VALID' },
+    { ...receipt, id: 'mismatch', docNo: 'REC-0372479105', customer: '旭', amount: 16600,
+      items: [{ productId: 'product-puffer', name: '真河豚刺身', qty: 40, amount: 20000, taxRate: 8, taxIncluded: true }] },
+    { ...receipt, id: 'empty', docNo: 'REC-EMPTY', items: [] },
+  ], products, '2026-10', '2026-10');
+  assert.deepEqual(issues, [
+    { documentId: 'mismatch', docNo: 'REC-0372479105', message: '領収金額 ¥16,600 / 明細合計 ¥20,000' },
+    { documentId: 'empty', docNo: 'REC-EMPTY', message: '明細未登録のためPCA出力できません' },
+  ]);
+});
+
+test('history PCA receipt issues isolate item validation failures and respect the selected period', () => {
+  const issues = getPcaReceiptIssues([
+    { ...receipt, id: 'wrong-period', date: '2026-09-30', amount: 500 },
+    { ...receipt, id: 'category', docNo: 'REC-CATEGORY', items: [{ name: '未知商品', amount: 100, taxRate: 8, taxIncluded: true }] },
+  ], [], '2026-10', '2026-10');
+  assert.deepEqual(issues, [
+    { documentId: 'category', docNo: 'REC-CATEGORY', message: '商品マスターの分類またはPCA補助コードを確認できません: 未知商品' },
+  ]);
 });
