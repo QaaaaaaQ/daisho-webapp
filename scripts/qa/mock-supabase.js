@@ -4,6 +4,7 @@ const clone=v=>JSON.parse(JSON.stringify(v));
 export const supabase={auth:{getSession:async()=>({data:{session:data().session}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}}),signOut:async()=>{}},from:()=>({update:()=>({eq:async()=>({})})})};
 export const db={
  getDocuments:async()=>clone(data().docs).map(mapDocument),getProducts:async()=>clone(data().products).map(p=>({...p,taxRate:p.tax_rate})),
+  getUserRole:async()=>'admin',getInventory:async()=>({locations:[],lots:[],reservations:[]}),getPayments:async()=>[],listUsers:async()=>[{user_id:uid,email:'test@example.invalid',role:'admin'}],
  getCustomers:async()=>[{id:'c1',name:'Demo buyer 1',code:'C-001'}],getCompany:async()=>({name:'DAISHO / TEST DATA',adminEmails:'test@example.invalid',logoImg:'',sealImg:'',personSealImg:''}),
  voidDocument:async(id,reason,reverseStock=false)=>{
   window.__requests.push({p_action:'void',p_payload:{id,reason,reverseStock}});

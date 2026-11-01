@@ -40,7 +40,7 @@ export function mapDocument(row) {
     description:row.description,toAddr:row.to_addr,toContact:row.to_contact,items:row.items||[],
     expiryDate:row.expiry_date,conditions:row.conditions,savedAt:row.created_at,
     savedBy:row.created_by_name,savedByEmail:row.created_by_email,createdBy:row.created_by,
-    updatedAt:row.updated_at,stockManaged:row.stock_managed ?? null,voidedAt:row.voided_at,
+    updatedAt:row.updated_at,stockManaged:row.stock_managed ?? null,inventoryMode:row.inventory_mode||'none',voidedAt:row.voided_at,
     voidReason:row.void_reason,convertedTo:row.converted_to_document_id,convertedAt:row.converted_at,
     sourceIds:row.source_document_ids||[],taxSummary:row.tax_summary,workflowVersion:row.workflow_version
   };

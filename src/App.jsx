@@ -3,6 +3,8 @@ import { historyDocumentView } from "./lib/history-display.js";
 import { HomeDashboard, ShipmentChoice, VoidDocumentModal } from "./components/WorkflowPanels.jsx";
 import { isBillable, documentStatus } from "./lib/workflow-client.js";
 import { documentTax } from "./lib/money.js";
+import { confirmLegacyPdfAmounts, taxCorrectionPreview } from "./lib/operations.js";
+import { OperationsView } from "./components/OperationsPanels.jsx";
 import { useState, useEffect, useRef } from "react";
 import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs, receiveStock } from "./lib/supabase";
 import { generateAndDownloadPDF, calcTax } from "./lib/pdf";
@@ -148,6 +150,9 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
     const receiptItems = validItems(f.items);
     const validationError = validateDocument({ ...f, items: receiptItems });
     if (validationError) { alert(validationError); return; }
+    if(f.inventoryMode==='reserve'&&f.items.some(item=>item?.name&&(!item.productId||item.unit!=='kg'||Number(item.qty)<=0||!Number.isInteger(Number(item.caseCount||0))||Number(item.caseCount||0)<0))) {
+      alert('在庫予約には商品マスターに登録済みのkg単位の商品と、正確なkg実重量・箱数が必要です。');return;
+    }
     const normalizedDoc = normalizeReceiptForSave({ ...f, items: receiptItems });
     if (!confirmReceiptAmount(normalizedDoc)) return;
     setSaving(true);
@@ -162,6 +167,10 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
         onClose(); setSaving(false); return;
       }
       setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
+      if(saved.inventoryMode==="reserve") {
+        try { await db.inventoryWorkflow('reserve',saved.id,null,'受注確定'); }
+        catch(e) { alert(`書類 ${saved.docNo} は保存済みですが、在庫を予約できませんでした: ${e.message}\n在庫・入金連携画面から在庫を確認して再試行してください。`); onClose(); return; }
+      }
       const result = await autoRegisterAndStock({...saved}, user);
       if (result.newCustomer || result.newProducts.length > 0) {
         const [prods, custs] = await Promise.all([db.getProducts(), db.getCustomers()]);
@@ -217,7 +226,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
     </div>}
     <>
     <div style={{ fontWeight:500, fontSize:13, marginBottom:8, color:"#374151" }}>{f.docType==="領収書"?"内容明細":"品目"}</div>
-    <ShipmentChoice doc={f} onChange={v=>upd("stockManaged",v)}/>
+    <ShipmentChoice doc={f} onChange={v=>upd("stockManaged",v)} onModeChange={v=>upd("inventoryMode",v)}/>
     <ItemsEditor items={f.items} products={products} docType={f.docType} onChange={items=>upd("items",items)}/>
     </>
     <Field label="備考"><input style={{ ...INP, marginTop:10 }} value={f.note} onChange={e=>upd("note",e.target.value)} placeholder="任意"/></Field>
@@ -255,7 +264,7 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
     </div>
     <>
       <div style={{ fontWeight:500, fontSize:13, marginBottom:8 }}>{d.docType==="領収書"?"内容明細":"品目"}</div>
-      <ShipmentChoice doc={d} onChange={v=>upd("stockManaged",v)}/>
+      <ShipmentChoice doc={d} onChange={v=>upd("stockManaged",v)} onModeChange={v=>upd("inventoryMode",v)}/>
       <ItemsEditor items={d.items||[]} products={products||[]} docType={d.docType} onChange={items=>upd("items",items)}/>
     </>
     {d.docType==="領収書"&&<>
@@ -485,7 +494,7 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
   </div>;
 }
 
-function HistoryView({ history, setHistory, co, products, setProducts, user, initialStatus="active" }) {
+function HistoryView({ history, setHistory, co, products, setProducts, user, role, initialStatus="active" }) {
   const [voidTarget,setVoidTarget]=useState(null);
   const [batchBusy,setBatchBusy]=useState(false);
   const batchLock=useRef(false);
@@ -500,6 +509,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
   const [batchDueDate, setBatchDueDate] = useState("");
   const [batchBank, setBatchBank] = useState(co.bankA||"");
   const [bulkDownloading, setBulkDownloading] = useState(false);
+  const [taxRates,setTaxRates]=useState([]);
 
   const viewFor = doc => historyDocumentView(doc);
   const canBill = doc => isBillable(doc) && !viewFor(doc).issue;
@@ -576,6 +586,25 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
     } catch(e){alert(e.message);}
   };
   const copyDoc = src => {if(viewFor(src).issue){alert(viewFor(src).issue);return;}setEditTarget(asDraft(src));setSel(null);};
+  const repairTax = async () => {
+    try {
+      const preview=taxCorrectionPreview(sel,taxRates);
+      const lines=preview.changes.map(c=>`${c.name}: ${c.from}% → ${c.to}%`).join('\n');
+      if(!window.confirm(`${sel.docNo} の税率修正をこの明細だけに適用し、監査記録を残しますか？\n${lines}\n修正後の税込合計 ¥${fm(preview.summary.total)} / 消費税 ¥${fm(preview.summary.tax)}\n元の税率は監査履歴に保存されます。`))return;
+      await db.repairLegacyTax(sel.id,sel.updatedAt,taxRates.map(Number));
+      const refreshed=await db.getDocuments();setHistory(refreshed);setSel(refreshed.find(d=>d.id===sel.id)||null);
+    } catch(e) { alert(e.message); }
+  };
+  const reissueLegacyPdf = () => {
+    try {
+      const gross=window.prompt('原票の税込合計金額（円）を入力してください');if(gross===null)return;
+      const tax=window.prompt('原票の消費税額（円）を入力してください');if(tax===null)return;
+      const rates=taxRates.map(Number);
+      const preview=confirmLegacyPdfAmounts(sel,{gross,tax,rates},true);
+      if(!window.confirm(`${sel.docNo}\n税込合計 ¥${fm(preview.taxSummary.total)} / 消費税 ¥${fm(preview.taxSummary.tax)}\nこの内容を確認済みPDFとして再発行しますか？`))return;
+      generateAndDownloadPDF(preview,co);
+    } catch(e) { alert(e.message); }
+  };
 
   return <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
     <div style={{ padding:"10px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
@@ -612,7 +641,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
       {filt.map(h=>{
         const view = viewFor(h);
         const isChecked = !!checked[h.id];
-        return <div key={h.id} onClick={()=>batchMode?null:setSel(h)}
+        return <div key={h.id} onClick={()=>{if(!batchMode){setSel(h);setTaxRates((h.items||[]).map(i=>Number(i.taxRate)||0));}}}
           style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 18px", borderBottom:"1px solid #f9f9f9", cursor:batchMode?"default":"pointer", background:isChecked?"#eff6ff":sel?.id===h.id?"#f9fafb":"transparent" }}>
           {batchMode&&<input type="checkbox" checked={isChecked} disabled={!canBill(h)} onChange={e=>toggleCheck(h.id,e)} style={{ width:16, height:16, cursor:h.docType==="納品書"?"pointer":"not-allowed", flexShrink:0 }}/>}
           <span style={{ background:tc(h.docType), color:"#fff", fontSize:11, padding:"2px 6px", borderRadius:3, whiteSpace:"nowrap" }}>{h.docType}</span>
@@ -658,8 +687,12 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, ini
       {!selectedView.issue&&receiptAmountMismatch(sel)&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginTop:8 }}>⚠️ 明細合計と領収金額が不一致です。領収金額 ¥{fm(sel.amount)} を正とし、明細は参考扱いです。</div>}
       {selectedView.issue&&<div role="alert" style={{fontSize:12,color:"#92400e",background:"#fffbeb",padding:10,marginTop:8}}>
         <strong>{selectedView.label}</strong><p>{selectedView.issue}</p>
-        <p>{"\u5143\u30c7\u30fc\u30bf\u306f\u5909\u66f4\u3057\u3066\u3044\u307e\u305b\u3093\u3002\u78ba\u8a8d\u524d\u306e\u7de8\u96c6\u30fb\u8907\u88fd\u30fb\u8acb\u6c42\u5909\u63db\u30fbPDF\u518d\u767a\u884c\u306f\u505c\u6b62\u3057\u3066\u3044\u307e\u3059\u3002"}</p>
+        <p>{"\u5143\u30c7\u30fc\u30bf\u306f\u81ea\u52d5\u4fee\u6b63\u3057\u307e\u305b\u3093\u3002\u7a0e\u7387\u306e\u4fee\u6b63\u306f\u7ba1\u7406\u8005\u304c\u539f\u7968\u78ba\u8a8d\u5f8c\u306b\u66f8\u985e\u5358\u4f4d\u3067\u78ba\u5b9a\u3067\u304d\u307e\u3059\u3002"}</p>
         <p>{"\u4fdd\u5b58\u6e08\u307f\u660e\u7d30\u306e\u7a0e\u7387: " + selectedView.items.map(i=>String(i.taxRate??"\u672a\u8a2d\u5b9a")).join(", ")}</p>
+        {selectedView.items.map((item,index)=><div key={index} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0'}}><span style={{flex:1}}>{item.name||`明細 ${index+1}`}</span><span>{String(item.taxRate??'未設定')}%</span><select aria-label={`${item.name||`明細 ${index+1}`} の確認税率`} value={taxRates[index]??''} onChange={e=>setTaxRates(r=>r.map((v,i)=>i===index?Number(e.target.value):v))}><option value="">原票確認後に選択</option>{![8,10].includes(Number(item.taxRate))&&<option value={Number(item.taxRate)||0} disabled>保存済み {String(item.taxRate??'未設定')}%</option>}<option value={8}>8%</option><option value={10}>10%</option></select></div>)}
+        <p>原票で全明細の税率を確認してください。修正は1件ずつ保存され、過去データは監査履歴に残ります。</p>
+        {role==='admin'&&<Btn variant="blue" onClick={repairTax}>税率を確認・この書類だけ修正</Btn>}
+        <Btn variant="primary" onClick={reissueLegacyPdf}>原票確認後にPDF再発行</Btn>
       </div>}
       <div style={{textAlign:"right",marginTop:8,fontSize:13}}>
         <div style={{color:"#6b7280"}}>{selectedView.tax==null ? "\u6d88\u8cbb\u7a0e: \u672a\u78ba\u5b9a" : "\u6d88\u8cbb\u7a0e: " + fm(selectedView.tax) + "\u5186"}</div>
@@ -1033,6 +1066,7 @@ export default function App() {
   const [masterTab,setMasterTab]=useState("customers");
   const [routeFilter,setRouteFilter]=useState("");
   const [loadError,setLoadError]=useState("");
+  const [role,setRole]=useState("employee");
   const [sideOpen, setSideOpen] = useState(window.innerWidth > 600);
 
   useEffect(()=>{
@@ -1045,11 +1079,12 @@ export default function App() {
     if (!session) return;
     (async()=>{
       try {
-        const [docs, company, prods, custs] = await Promise.all([db.getDocuments(), db.getCompany(), db.getProducts(), db.getCustomers()]);
+        const [docs, company, prods, custs, userRole] = await Promise.all([db.getDocuments(), db.getCompany(), db.getProducts(), db.getCustomers(), db.getUserRole()]);
         setHistory(docs||[]);
         if (company) setCo({...DEFAULT_CO,...company});
         setProducts(prods||[]);
         setCustomers(custs||[]);
+        setRole(userRole||"employee");
       } catch(e) { setLoadError(e.message); }
     })();
   }, [session]);
@@ -1066,7 +1101,7 @@ export default function App() {
     : <div style={{ width:28, height:28, borderRadius:"50%", background:"rgba(37,99,235,0.5)", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:12, fontWeight:600 }}>{name.charAt(0)}</div>;
 
   const todayCount = (history||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
-  const TABS = [["home","\u2302","\u4eca\u65e5\u306e\u696d\u52d9"],["chat","\u270e","\u8ca9\u58f2"],["history","\u2261","\u8acb\u6c42\u30fb\u767a\u884c\u5c65\u6b74"],["products","\u25a6","\u5728\u5eab\u30fb\u5546\u54c1"],["masters","\u2699","\u30de\u30b9\u30bf\u30fc\u30fb\u8a2d\u5b9a"]];
+  const TABS = [["home","\u2302","\u4eca\u65e5\u306e\u696d\u52d9"],["chat","\u270e","\u8ca9\u58f2"],["history","\u2261","\u8acb\u6c42\u30fb\u767a\u884c\u5c65\u6b74"],["products","\u25a6","\u5728\u5eab\u30fb\u5546\u54c1"],["operations","\u21c4","\u5728\u5eab\u30fb\u5165\u91d1\u9023\u643a"],["masters","\u2699","\u30de\u30b9\u30bf\u30fc\u30fb\u8a2d\u5b9a"]];
 
   return <div style={{ display:"flex", height:"100vh", fontFamily:'"Hiragino Sans","Yu Gothic UI","Meiryo","Noto Sans CJK JP",sans-serif', background:"#f9fafb" }}>
     <aside style={{ width:sideOpen?190:50, background:N, display:"flex", flexDirection:"column", flexShrink:0, transition:"width .18s", overflow:"hidden" }}>
@@ -1113,15 +1148,17 @@ export default function App() {
           {tab==="products"&&"📦 商品マスター"}
           {tab==="customers"&&"👥 顧客マスター"}
           {tab==="settings"&&"⚙️ 設定"}
+          {tab==="operations"&&"⇄ 在庫・入金・権限"}
         </h2>
       </div>
       {loadError&&<div role="alert" style={{padding:14,background:'#fef2f2',color:'#b91c1c'}}>{'\u30c7\u30fc\u30bf\u53d6\u5f97\u5931\u6557: '}{loadError} <button onClick={()=>window.location.reload()}>{'\u518d\u8aad\u8fbc'}</button></div>}
       <div style={{ flex:1, overflow:"hidden" }}>
         {tab==="home"&&<HomeDashboard history={history} products={products} onNavigate={(tab,filter="")=>{setRouteFilter(filter);setTab(tab);}}/>}
-        {tab==="masters"&&<div style={{display:'flex',flexDirection:'column',height:'100%'}}><div style={{padding:10,display:'flex',gap:8}}><Btn onClick={()=>setMasterTab('customers')}>{'\u9867\u5ba2\u30de\u30b9\u30bf\u30fc'}</Btn><Btn onClick={()=>setMasterTab('settings')}>{'\u4f1a\u793e\u30fb\u8a2d\u5b9a'}</Btn></div><div style={{flex:1,overflow:'auto'}}>{masterTab==='customers'?<CustomersView customers={customers} setCustomers={setCustomers}/>:<SettingsView co={co} setCo={setCo}/>}</div></div>}
+        {tab==="masters"&&<div style={{display:'flex',flexDirection:'column',height:'100%'}}><div style={{padding:10,display:'flex',gap:8}}><Btn onClick={()=>setMasterTab('customers')}>{'\u9867\u5ba2\u30de\u30b9\u30bf\u30fc'}</Btn>{role==='admin'&&<Btn onClick={()=>setMasterTab('settings')}>{'\u4f1a\u793e\u30fb\u8a2d\u5b9a'}</Btn>}</div><div style={{flex:1,overflow:'auto'}}>{masterTab==='customers'?<CustomersView customers={customers} setCustomers={setCustomers}/>:role==='admin'?<SettingsView co={co} setCo={setCo}/>:<div style={{padding:20}}>管理者権限が必要です</div>}</div></div>}
 
         {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
-        {tab==="history"&&<HistoryErrorBoundary key={routeFilter||"active"} onHome={()=>setTab("home")}><HistoryView initialStatus={routeFilter||"active"} history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} user={user}/></HistoryErrorBoundary>}
+        {tab==="history"&&<HistoryErrorBoundary key={routeFilter||"active"} onHome={()=>setTab("home")}><HistoryView initialStatus={routeFilter||"active"} history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} user={user} role={role}/></HistoryErrorBoundary>}
+        {tab==="operations"&&<OperationsView db={db} products={products} documents={history} role={role} onDocumentsRefresh={async()=>setHistory(await db.getDocuments())}/>}
         {tab==="products"&&<ProductsView initialNegative={routeFilter==="negative"} products={products} setProducts={setProducts} user={user}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}

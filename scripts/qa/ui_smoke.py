@@ -56,10 +56,15 @@ with sync_playwright() as p:
  page.get_by_text('\u2713 \u4fdd\u5b58\u6e08',exact=True).wait_for()
  requests=page.evaluate('window.__requests');assert requests[-1]['p_action']=='create' and len(requests)==n+1
  page.screenshot(path=str(OUT/'sales-confirmed.png'),full_page=True)
+ page.get_by_role('button',name=re.compile('\u5728\u5eab\u30fb\u5165\u91d1\u9023\u643a')).click()
+ page.get_by_text('\u5728\u5eab\u30fb\u30ed\u30c3\u30c8\u7ba1\u7406\uff08\u7bb1\u6570 + kg\u5b9f\u91cd\u91cf\uff09').wait_for()
+ page.get_by_text('\u5165\u91d1CSV / PCA\u5411\u3051\u624b\u52d5\u7167\u5408').wait_for()
+ page.get_by_text('\u30e6\u30fc\u30b6\u30fc\u6a29\u9650').wait_for()
  page.set_viewport_size({'width':390,'height':844})
+ page.locator('main').get_by_role('button').first.click()
  page.get_by_role('button',name=re.compile('\u4eca\u65e5\u306e\u696d\u52d9')).click()
  page.screenshot(path=str(OUT/'home-mobile.png'),full_page=True)
  assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
  assert not errors,errors
  browser.close()
-print(json.dumps({'ui_checks':7,'javascript_errors':errors,'unexpected_alerts':dialogs,'rpc_calls':len(requests)},ensure_ascii=False))
+print(json.dumps({'ui_checks':10,'javascript_errors':errors,'unexpected_alerts':dialogs,'rpc_calls':len(requests)},ensure_ascii=False))

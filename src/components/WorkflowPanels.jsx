@@ -30,12 +30,15 @@ export function HomeDashboard({history,products,onNavigate}){
   </div>
  </section>;
 }
-export function ShipmentChoice({doc,onChange}){
+export function ShipmentChoice({doc,onChange,onModeChange}){
  if(!['\u7d0d\u54c1\u66f8','\u8acb\u6c42\u66f8'].includes(doc.docType))return null;
  const managed=doc.stockManaged ?? doc.docType==='\u7d0d\u54c1\u66f8';
+ const mode=doc.inventoryMode || (managed?'ship':'none');
  return <div style={{padding:10,background:'#eff6ff',borderRadius:6,fontSize:12,marginBottom:12}}>
-  <label><input type="checkbox" disabled={Boolean(doc.id)} checked={managed} onChange={e=>onChange(e.target.checked)}/>{'\u3053\u306e\u767b\u9332\u3068\u540c\u6642\u306b\u5b9f\u969b\u306e\u51fa\u8377\u3092\u8a18\u9332\u3059\u308b'}</label>
-  <div style={{marginTop:5,color:'#475569'}}>{'\u898b\u7a4d\u66f8\u30fb\u9818\u53ce\u66f8\u30fb\u7d0d\u54c1\u66f8\u304b\u3089\u306e\u307e\u3068\u3081\u8acb\u6c42\u3067\u306f\u51fa\u5eab\u3057\u307e\u305b\u3093\u3002'}</div>
+  <label style={{display:'block'}}><input type="radio" name="inventory-mode" disabled={Boolean(doc.id)} checked={mode==='ship'&&managed} onChange={()=>{onChange(true);onModeChange?.('ship');}}/>{'\u3053\u306e\u767b\u9332\u3068\u540c\u6642\u306b\u51fa\u5eab\u3092\u53cd\u6620\u3059\u308b'}</label>
+  {doc.docType==='\u7d0d\u54c1\u66f8'&&<label style={{display:'block',marginTop:5}}><input type="radio" name="inventory-mode" disabled={Boolean(doc.id)} checked={mode==='reserve'} onChange={()=>{onChange(false);onModeChange?.('reserve');}}/>{'\u53d7\u6ce8\u78ba\u5b9a\u3067\u5728\u5eab\u4e88\u7d04\u3057\u3001\u5f8c\u65e5\u51fa\u8377\u3059\u308b'}</label>}
+  <label style={{display:'block',marginTop:5}}><input type="radio" name="inventory-mode" disabled={Boolean(doc.id)} checked={mode==='none'&&!managed} onChange={()=>{onChange(false);onModeChange?.('none');}}/>{'\u5728\u5eab\u3092\u52d5\u304b\u3055\u306a\u3044'}</label>
+  <div style={{marginTop:5,color:'#475569'}}>{'\u4e88\u7d04\u51e6\u7406\u306f\u5009\u5eab\u3068\u30ed\u30c3\u30c8\u306e\u5b9f\u5728\u5eab\u3092\u78ba\u8a8d\u3057\u307e\u3059\u3002\u898b\u7a4d\u66f8\u3084\u307e\u3068\u3081\u8acb\u6c42\u306f\u5728\u5eab\u3092\u52d5\u304b\u3057\u307e\u305b\u3093\u3002'}</div>
  </div>;
 }
 export function VoidDocumentModal({doc,onClose,onSubmit}){
