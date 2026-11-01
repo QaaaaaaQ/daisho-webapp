@@ -12,6 +12,7 @@ test.before(async()=>{
   await pg.exec(await readFile(new URL('../supabase/migrations/20261027220243_atomic_sales_workflows.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101000000_operations_modules.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101031605_pca_manual_payment_and_account_mapping.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261101032348_disable_payment_csv_import.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
@@ -88,6 +89,12 @@ test('manual payment entry is idempotent and audited',async()=>{
   const retry=(await pg.query("SELECT allocate_payment($1,$2,2500,$3) result",[payment,invoiceId,allocationRequest])).rows[0].result;
   assert.equal(retry.invoicePaid,2500);assert.equal((await pg.query('SELECT count(*)::int n FROM payment_allocations')).rows[0].n,1);
   await assert.rejects(pg.query("SELECT allocate_payment($1,$2,600,$3)",[payment,invoiceId,randomUUID()]));
+});
+
+test('bank CSV import RPC is no longer executable by browser roles',async()=>{
+  assert.equal((await pg.query("SELECT has_function_privilege('anon','public.import_payments(jsonb)','EXECUTE') allowed")).rows[0].allowed,false);
+  assert.equal((await pg.query("SELECT has_function_privilege('authenticated','public.import_payments(jsonb)','EXECUTE') allowed")).rows[0].allowed,false);
+  assert.equal((await pg.query("SELECT to_regprocedure('public.import_payments(jsonb)') IS NOT NULL retained")).rows[0].retained,true);
 });
 
 test('historical rate correction requires admin and writes an item-level audit record',async()=>{
