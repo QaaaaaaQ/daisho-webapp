@@ -102,7 +102,8 @@ function receiptRow(doc, line) {
   row[22] = TAX_CODES[line.rate];
   row[24] = String(line.gross);
   row[25] = String(line.tax);
-  row[26] = String(doc.description || doc.customer || '').trim();
+  // PCA 摘要には商品代等の但し書きではなく、領収書の宛先（取引先名）を出力する。
+  row[26] = String(doc.customer || '').trim();
   row[30] = '1';
   return row;
 }

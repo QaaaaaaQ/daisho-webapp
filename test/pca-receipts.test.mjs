@@ -48,7 +48,7 @@ test('PCA receipt export debits account 135 without an auxiliary code and credit
   assert.equal(row[22], 'B6');
   assert.equal(row[24], '108');
   assert.equal(row[25], '8');
-  assert.equal(row[26], '鮮魚代として');
+  assert.equal(row[26], 'ヒマココ合同会社');
   assert.deepEqual(result.skippedDocuments, []);
 });
 
