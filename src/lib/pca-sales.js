@@ -14,7 +14,7 @@ function normalizeCustomerName(value) {
   return normalizeName(value).replace(/株式会社|有限会社|合同会社|合名会社|合資会社/g, '');
 }
 
-function findCustomerMaster(customers, name) {
+export function findCustomerMaster(customers, name) {
   const exactKey = normalizeName(name);
   const exact = (customers || []).filter(customer => normalizeName(customer.name) === exactKey);
   if (exact.length === 1) return { customer: exact[0] };

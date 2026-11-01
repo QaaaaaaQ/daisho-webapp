@@ -16,6 +16,7 @@ test.before(async()=>{
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101080517_sync_reserved_document_changes.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101081041_revoke_legacy_workflow_rpcs.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101083428_fix_user_list_email_type.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261101125932_document_input_audit.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
@@ -71,6 +72,24 @@ test('an administrator can list users and change a role while an employee is den
   await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[employee]);
   try { await assert.rejects(pg.query('SELECT * FROM public.list_app_users()')); }
   finally { await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]); }
+});
+
+test('input events identify their real actor, contain only structured fields, and are searchable by administrators',async()=>{
+  const employee=randomUUID();
+  await pg.query('INSERT INTO auth.users VALUES($1,$2)',[employee,'input-test@example.invalid']);
+  await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'employee')",[employee]);
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[employee]);
+  await pg.query("SELECT public.record_document_input_event('請求書','validation_error','customer_code_missing','customer_code',NULL)");
+  await pg.query("SELECT public.record_document_input_event('請求書','validation_error','product_category_missing','items.0.category',NULL)");
+  await assert.rejects(pg.query("SELECT public.record_document_input_event('請求書','validation_error','private free text','customer_code',NULL)"));
+  await assert.rejects(pg.query('SELECT * FROM public.list_document_input_events()'));
+  assert.equal((await pg.query("SELECT has_function_privilege('anon','public.record_document_input_event(text,text,text,text,uuid)','EXECUTE') allowed")).rows[0].allowed,false);
+  assert.equal((await pg.query("SELECT has_table_privilege('authenticated','app_private.document_input_events','SELECT') allowed")).rows[0].allowed,false);
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]);
+  const rows=(await pg.query("SELECT * FROM public.list_document_input_events($1,'請求書',NULL,NULL,200)",[employee])).rows;
+  assert.equal(rows.length,2);assert.ok(rows.every(row=>row.actor_id===employee));
+  assert.ok(rows.some(row=>row.issue_code==='customer_code_missing'&&row.field_name==='customer_code'));
+  assert.ok(rows.some(row=>row.issue_code==='product_category_missing'&&row.field_name==='items.0.category'));
 });
 
 test('editing a reserved document updates reservations atomically and shipped quantities cannot change',async()=>{

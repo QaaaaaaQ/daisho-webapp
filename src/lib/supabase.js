@@ -24,10 +24,16 @@ function resultDocument(result) {
   return {...normalizeDoc(result.document),_effects:{newCustomer:result.newCustomer,newProducts:result.newProducts||[],stockLogs:result.stockLogs||[]}};
 }
 
-export const db = {
+let previewActorId = null;
+export function setEmployeePreview(actorId) { previewActorId = actorId || null; }
+export function isEmployeePreview() { return Boolean(previewActorId); }
+
+const dbImpl = {
   // ── Documents ──────────────────────────────────────────────
   async getDocuments() {
-    const { data, error } = await supabase.from("documents").select("*,inventory_reservations(status)").order("created_at", { ascending: false });
+    let query = supabase.from("documents").select("*,inventory_reservations(status)").order("created_at", { ascending: false });
+    if(previewActorId) query=query.eq('created_by',previewActorId);
+    const { data, error } = await query;
     if (error) throw error;
     return (data || []).map(normalizeDoc);
   },
@@ -90,6 +96,13 @@ export const db = {
       if (error) throw error;
     }
   },
+  async setProductCategory(id,expected,category) {
+    let query=supabase.from('products').update({category}).eq('id',id);
+    query=expected==null ? query.is('category',null) : query.eq('category',expected);
+    const {data,error}=await query.select('id').maybeSingle();
+    if(error)throw error;
+    if(!data)throw new Error('商品マスターが更新されました。最新情報を確認してください。');
+  },
   async deleteProduct(id) {
     const { error } = await supabase.from("products").delete().eq("id", id).select("id").single();
     if (error) throw error;
@@ -109,13 +122,14 @@ export const db = {
     const {error}=await supabase.rpc('set_user_role',{p_user_id:userId,p_role:role}); if(error)throw error;
   },
   async getInventory() {
+    const actorId=previewActorId;
     const [locations,lots,reservations]=await Promise.all([
       supabase.from('inventory_locations').select('*').eq('active',true).order('name'),
       supabase.from('inventory_lots').select('*,products(id,code,name,unit),inventory_locations(id,name)').order('expires_on',{ascending:true,nullsFirst:false}),
-      supabase.from('inventory_reservations').select('*,documents(doc_no,customer),products(name,code),inventory_locations(name)').order('created_at',{ascending:false})
+      supabase.from('inventory_reservations').select('*,documents(doc_no,customer,created_by),products(name,code),inventory_locations(name)').order('created_at',{ascending:false})
     ]);
     for(const result of [locations,lots,reservations])if(result.error)throw result.error;
-    return {locations:locations.data||[],lots:lots.data||[],reservations:reservations.data||[]};
+    return {locations:locations.data||[],lots:lots.data||[],reservations:(reservations.data||[]).map(r=>actorId && r.documents?.created_by!==actorId ? {...r,documents:null} : r)};
   },
   async createInventoryLocation(name) {
     const {data,error}=await supabase.rpc('create_inventory_location',{p_name:name}); if(error)throw error; return data;
@@ -130,8 +144,10 @@ export const db = {
     if(error)throw error; return data;
   },
   async getPayments() {
-    const {data,error}=await supabase.from('payments').select('*,payment_allocations(id,document_id,amount,documents(doc_no,customer))').order('payment_date',{ascending:false});
-    if(error)throw error; return data||[];
+    const actorId=previewActorId;
+    const {data,error}=await supabase.from('payments').select('*,payment_allocations(id,document_id,amount,documents(doc_no,customer,created_by))').order('payment_date',{ascending:false});
+    if(error)throw error;
+    return (data||[]).map(p=>actorId ? {...p,payment_allocations:(p.payment_allocations||[]).map(a=>a.documents?.created_by!==actorId?{...a,documents:null}:a)} : p);
   },
   async createManualPayment(payment) {
     const key=`daisho-manual-payment:${payment.date}:${String(payment.payer).trim().normalize('NFKC')}:${Number(payment.amount)}:${String(payment.reference||'').trim().normalize('NFKC')}`;
@@ -150,6 +166,14 @@ export const db = {
   async repairLegacyTax(documentId,expectedUpdatedAt,rates) {
     const {data,error}=await supabase.rpc('repair_legacy_document_tax',{p_document_id:documentId,p_expected_updated_at:expectedUpdatedAt,p_rates:rates});
     if(error)throw error; return data;
+  },
+  async recordInputEvent({docType,eventType,issueCode,fieldName,documentId=null}) {
+    const {error}=await supabase.rpc('record_document_input_event',{p_doc_type:docType,p_event_type:eventType,p_issue_code:issueCode,p_field_name:fieldName,p_document_id:documentId});
+    if(error)throw error;
+  },
+  async listInputEvents({actorId=null,docType=null,from=null,to=null,limit=200}={}) {
+    const {data,error}=await supabase.rpc('list_document_input_events',{p_actor_id:actorId||null,p_doc_type:docType||null,p_from:from||null,p_to:to||null,p_limit:limit});
+    if(error)throw error; return data||[];
   },
 
   // ── Customers ──────────────────────────────────────────────
@@ -172,11 +196,28 @@ export const db = {
       if (error) throw error;
     }
   },
+  async setCustomerCode(id,expected,code) {
+    let query=supabase.from('customers').update({code}).eq('id',id);
+    query=expected==null ? query.is('code',null) : query.eq('code',expected);
+    const {data,error}=await query.select('id').maybeSingle();
+    if(error)throw error;
+    if(!data)throw new Error('顧客マスターが更新されました。最新情報を確認してください。');
+  },
   async deleteCustomer(id) {
     const { error } = await supabase.from("customers").delete().eq("id", id).select("id").single();
     if (error) throw error;
   },
 };
+
+const previewReads = new Set(['getDocuments','getCompany','getProducts','getCustomers','getInventory','getPayments','getUserRole']);
+export const db = new Proxy(dbImpl, { get(target,key,receiver) {
+  const value=Reflect.get(target,key,receiver);
+  if(typeof value!=='function')return value;
+  return (...args)=>{
+    if(previewActorId && !previewReads.has(key)) return Promise.reject(new Error('スタッフ画面の確認中は変更できません。管理者画面に戻って操作してください。'));
+    return value.apply(target,args);
+  };
+} });
 
 // ── AI (Gemini Edge Function) ──────────────────────────────
 // input は文字列（単発）または会話履歴の配列 [{role,content},...]

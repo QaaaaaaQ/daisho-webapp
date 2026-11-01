@@ -7,13 +7,17 @@ import { isBillable, documentStatus } from "./lib/workflow-client.js";
 import { documentTax } from "./lib/money.js";
 import { confirmLegacyPdfAmounts, taxCorrectionPreview } from "./lib/operations.js";
 import { OperationsView } from "./components/OperationsPanels.jsx";
+import { InputEventsPanel } from "./components/InputEventsPanel.jsx";
 import { useState, useEffect, useMemo, useRef } from "react";
-import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs, receiveStock } from "./lib/supabase";
+import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs, receiveStock, setEmployeePreview, isEmployeePreview } from "./lib/supabase";
 import { generateAndDownloadPDF, calcTax } from "./lib/pdf";
 import { downloadDocumentsCSV } from "./lib/csv";
 import { pcaInvoicesToCSV } from "./lib/pca-sales.js";
 import { getPcaReceiptIssues, pcaReceiptsToCSV } from "./lib/pca-receipts.js";
 import { draftItem, localDate, validItems, validateDocument, documentTotal } from "./lib/domain";
+import { PcaReadiness } from './components/PcaReadiness.jsx';
+import { pcaInputIssues } from './lib/input-quality.js';
+import { recordInputEvents, validationEvent, failureEvent } from './lib/input-events.js';
 
 const tod = () => localDate();
 const fm = (n) => Number(n || 0).toLocaleString("ja-JP");
@@ -36,6 +40,10 @@ const confirmReceiptAmount = (doc) => {
   if (!receiptAmountMismatch(doc)) return true;
   const detailTotal = receiptDetailTotal(doc);
   return window.confirm(`領収金額 ¥${fm(doc.amount)} と明細合計 ¥${fm(detailTotal)} が一致しません。\n手入力の領収金額を正とし、PDFでは不一致の明細を表示しません。\nこの金額で保存しますか？`);
+};
+const recordOrWarn=async(docType,eventType,issues,documentId=null)=>{
+  const ok=await recordInputEvents(docType,eventType,issues,documentId);
+  if(!ok)alert('操作履歴を記録できませんでした。管理者に連絡してください。');
 };
 const tid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
 const DOC_KW = ["納品書","請求書","領収書","見積書"];
@@ -150,13 +158,15 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
     if (c && c.bank) upd("bank", c.bank);
   };
   const handleSave = async (print) => {
-    if (!f.customer) { alert("取引先を選択してください"); return; }
+    if (!f.customer) { await recordOrWarn(f.docType,'validation_error',[{code:'customer_missing',field:'customer'}]); alert("取引先を選択してください"); return; }
     const receiptItems = validItems(f.items);
     const validationError = validateDocument({ ...f, items: receiptItems });
-    if (validationError) { alert(validationError); return; }
+    if (validationError) { await recordOrWarn(f.docType,'validation_error',[validationEvent(validationError)]); alert(validationError); return; }
     if(f.inventoryMode==='reserve'&&f.items.some(item=>item?.name&&(!item.productId||item.unit!=='kg'||Number(item.qty)<=0||!Number.isInteger(Number(item.caseCount||0))||Number(item.caseCount||0)<0))) {
-      alert('在庫予約には商品マスターに登録済みのkg単位の商品と、正確なkg実重量・箱数が必要です。');return;
+      await recordOrWarn(f.docType,'validation_error',[{code:'reservation_invalid',field:'inventory'}]);alert('在庫予約には商品マスターに登録済みのkg単位の商品と、正確なkg実重量・箱数が必要です。');return;
     }
+    const issues=pcaInputIssues(f,customers,products);
+    if(issues.length){await recordOrWarn(f.docType,'validation_error',issues);alert('PCA出力のため、表示された項目を確認してください。');return;}
     const normalizedDoc = normalizeReceiptForSave({ ...f, items: receiptItems });
     if (!confirmReceiptAmount(normalizedDoc)) return;
     setSaving(true);
@@ -170,6 +180,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
         alert("⚠️ 同じ内容の"+(saved.docType||"書類")+"が既に作成済みです（"+saved.docNo+"）。\n重複作成を防止しました。");
         onClose(); setSaving(false); return;
       }
+      await recordOrWarn(saved.docType,'saved',[{code:'saved',field:'document'}],saved.id);
       setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
       const result = await autoRegisterAndStock({...saved}, user);
       if (result.newCustomer || result.newProducts.length > 0) {
@@ -185,7 +196,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
       if (result.stockLogs.length > 0) msgs.push("出庫記録: " + result.stockLogs.map(l=>l.name+"×"+l.qty).join("、"));
       if (msgs.length > 0) alert(msgs.join("\n"));
       onClose();
-    } catch(e) { alert((e._duplicate ? "⚠️ " : "エラー: ") + e.message); }
+    } catch(e) { await recordOrWarn(f.docType,'save_error',[failureEvent(e)]);alert((e._duplicate ? "⚠️ " : "エラー: ") + e.message); }
     setSaving(false);
   };
   return <Modal title={`📝 ${f.docType}を直接作成`} onClose={onClose} maxW={900} tall>
@@ -221,13 +232,14 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
       {f.docType==="領収書"&&receiptPreviewAmount>0&&<div style={{ textAlign:"right", fontSize:14, color:"#7c3aed", fontWeight:500 }}>
         {"領収金額: ¥" + receiptPreviewAmount.toLocaleString("ja-JP") + " -"}
       </div>}
-      {f.docType==="領収書"&&receiptPreviewItems.length>0&&<div style={{ fontSize:11, color:"#7c3aed", marginTop:4 }}>手入力した領収金額を優先します。金額を空欄にした場合のみ、明細合計（税込）を使用します（現在の明細合計: ¥{receiptItemsTotal.toLocaleString("ja-JP")}）。</div>}
-      {f.docType==="領収書"&&receiptAmountIsMismatched&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginTop:6 }}>⚠️ 手入力金額と明細合計が不一致です。保存時に手入力金額を正とする確認を表示し、PDFでは明細を非表示にします。</div>}
+      {f.docType==="領収書"&&receiptPreviewItems.length>0&&<div style={{ fontSize:11, color:"#7c3aed", marginTop:4 }}>金額を空欄にした場合は明細合計（税込）を使用します（現在の明細合計: ¥{receiptItemsTotal.toLocaleString("ja-JP")}）。</div>}
+      {f.docType==="領収書"&&receiptAmountIsMismatched&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginTop:6 }}>⚠️ 領収金額と明細合計を一致させてから保存してください。</div>}
     </div>}
     <>
     <div style={{ fontWeight:500, fontSize:13, marginBottom:8, color:"#374151" }}>{f.docType==="領収書"?"内容明細":"品目"}</div>
     <ShipmentChoice doc={f} onChange={v=>upd("stockManaged",v)} onModeChange={v=>upd("inventoryMode",v)}/>
     <ItemsEditor items={f.items} products={products} docType={f.docType} onChange={items=>upd("items",items)}/>
+    <PcaReadiness doc={f} customers={customers} products={products} onCustomersChange={setCustomers} onProductsChange={setProducts} onItemsChange={(index,item)=>setF(x=>({...x,items:x.items.map((it,i)=>i===index?item:it)}))}/>
     </>
     <Field label="備考"><input style={{ ...INP, marginTop:10 }} value={f.note} onChange={e=>upd("note",e.target.value)} placeholder="任意"/></Field>
     <div style={{ display:"flex", gap:8, marginTop:14, justifyContent:"flex-end" }}>
@@ -238,7 +250,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
   </Modal>;
 }
 
-function DocEditModal({ doc, onClose, onSave, co, products }) {
+function DocEditModal({ doc, onClose, onSave, co, products, customers, setProducts, setCustomers }) {
   const [d, setD] = useState({ ...doc });
   const [saving,setSaving]=useState(false);
   const saveLock=useRef(false);
@@ -247,7 +259,12 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
   const editReceiptAmountIsMismatched = editReceiptItems.length > 0 && Number(d.amount||0) > 0 && Math.abs(Number(d.amount) - editReceiptItemsTotal) > 0.01;
   const upd = (k,v) => setD(x=>({...x,[k]:v}));
   const submit = async () => {
-    if(saveLock.current||!confirmReceiptAmount(d))return;
+    if(saveLock.current)return;
+    const validationError=validateDocument(d);
+    if(validationError){await recordOrWarn(d.docType,'validation_error',[validationEvent(validationError)]);alert(validationError);return;}
+    const issues=pcaInputIssues(d,customers,products);
+    if(issues.length){await recordOrWarn(d.docType,'validation_error',issues);alert('PCA出力のため、表示された項目を確認してください。');return;}
+    if(!confirmReceiptAmount(d))return;
     saveLock.current=true;setSaving(true);
     try{await onSave(d);}finally{saveLock.current=false;setSaving(false);}
   };
@@ -266,11 +283,12 @@ function DocEditModal({ doc, onClose, onSave, co, products }) {
       <div style={{ fontWeight:500, fontSize:13, marginBottom:8 }}>{d.docType==="領収書"?"内容明細":"品目"}</div>
       <ShipmentChoice doc={d} onChange={v=>upd("stockManaged",v)} onModeChange={v=>upd("inventoryMode",v)}/>
       <ItemsEditor items={d.items||[]} products={products||[]} docType={d.docType} onChange={items=>upd("items",items)}/>
+      <PcaReadiness doc={d} customers={customers||[]} products={products||[]} onCustomersChange={setCustomers} onProductsChange={setProducts} onItemsChange={(index,item)=>setD(x=>({...x,items:(x.items||[]).map((it,i)=>i===index?item:it)}))}/>
     </>
     {d.docType==="領収書"&&<>
       <Field label="金額（税込）"><input style={INP} type="number" value={d.amount||""} onChange={e=>upd("amount",e.target.value)} placeholder={editReceiptItems.length > 0 ? "空欄なら明細合計" : "例: 50000"}/></Field>
-      {editReceiptItems.length > 0&&<div style={{ fontSize:11, color:"#7c3aed", marginTop:-6, marginBottom:8 }}>手入力金額を優先します。空欄の場合のみ明細合計（税込）¥{editReceiptItemsTotal.toLocaleString("ja-JP")}を使用します。</div>}
-      {editReceiptAmountIsMismatched&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginBottom:8 }}>⚠️ 手入力金額と明細合計が不一致です。保存時に手入力金額を正とする確認を表示し、PDFでは明細を非表示にします。</div>}
+      {editReceiptItems.length > 0&&<div style={{ fontSize:11, color:"#7c3aed", marginTop:-6, marginBottom:8 }}>金額が空欄の場合は明細合計（税込）¥{editReceiptItemsTotal.toLocaleString("ja-JP")}を使用します。</div>}
+      {editReceiptAmountIsMismatched&&<div style={{ fontSize:11, color:"#b45309", background:"#fffbeb", border:"1px solid #fcd34d", borderRadius:6, padding:"6px 8px", marginBottom:8 }}>⚠️ 領収金額と明細合計を一致させてから保存してください。</div>}
       <Field label="但し書き"><input style={INP} value={d.description||"商品代として"} onChange={e=>upd("description",e.target.value)}/></Field>
     </>}
     <Field label="備考"><input style={{ ...INP, marginTop:8 }} value={d.note||""} onChange={e=>upd("note",e.target.value)}/></Field>
@@ -366,6 +384,7 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
 
   const send = async (text) => {
     if (!text.trim() || loading) return;
+    if(isEmployeePreview()){alert('スタッフ画面の確認中は送信できません。');return;}
     setMsgs(m=>[...m, { id:tid(), role:"user", text:text.trim() }]);
     setInput(""); setLoading(true);
     try {
@@ -387,6 +406,7 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
         const parsed = res.doc || res;
         const parsedValidation = validateDocument(parsed);
         if (parsedValidation) {
+          await recordOrWarn(parsed.docType,'validation_error',[validationEvent(parsedValidation)]);
           setPendingParse([...convo, { role:"assistant", content:parsedValidation }]);
           setMsgs(m=>[...m,{ id:tid(), role:"assistant", text:parsedValidation }]);
           setLoading(false);
@@ -437,17 +457,20 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
   const handleEditSave = async (newDoc) => {
     const prepared = normalizeReceiptForSave(newDoc);
     const validationError = validateDocument(prepared);
-    if (validationError) { alert(validationError); return; }
+    if (validationError) { await recordOrWarn('請求書','validation_error',[validationEvent(validationError)]);alert(validationError); return; }
+    const issues=pcaInputIssues(inv,customers,products);
+    if(issues.length){await recordOrWarn('請求書','validation_error',issues);alert('PCA出力のため、表示された項目を確認してください。');return;}
     try {
       const saved = prepared.id ? await db.updateDocument(prepared.id, prepared) : await db.saveDocument(prepared,user);
       if (saved.id) {
+        await recordOrWarn(saved.docType,'saved',[{code:'saved',field:'document'}],saved.id);
         setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
         setProducts(await db.getProducts());
       }
       setDocStates(s=>({...s,[editTarget.msgId]:{ ...s[editTarget.msgId], doc:saved, saved:Boolean(saved.id), saving:false }}));
       setMsgs(m=>m.map(msg=>msg.id===editTarget.msgId?{...msg,doc:saved,text:(saved.docType||"書類")+"を更新しました ✓"}:msg));
       setEditTarget(null);
-    } catch (e) { alert("編集保存エラー: " + e.message); }
+    } catch (e) { await recordOrWarn(prepared.docType,'save_error',[failureEvent(e)]);alert("編集保存エラー: " + e.message); }
   };
 
   return <div className="sales-view" style={{ display:"flex", flexDirection:"column", height:"100%" }}>
@@ -488,13 +511,13 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
           style={{ padding:"9px 14px", background:N, color:"#fff", border:"none", borderRadius:8, cursor:"pointer", fontSize:13, fontFamily:"inherit", height:42, opacity:(!input.trim()||loading)?0.5:1 }}>送信 ↑</button>
       </div>
     </div>
-    {editTarget&&<DocEditModal doc={editTarget.doc} co={co} products={products} onClose={()=>setEditTarget(null)} onSave={handleEditSave}/>}
+    {editTarget&&<DocEditModal doc={editTarget.doc} co={co} products={products} customers={customers} setProducts={setProducts} setCustomers={setCustomers} onClose={()=>setEditTarget(null)} onSave={handleEditSave}/>}
     {showDirect&&<DirectDocForm co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user} onClose={()=>setShowDirect(false)}/>}
     <style>{`@keyframes blink{0%,80%,100%{opacity:0}40%{opacity:1}}`}</style>
   </div>;
 }
 
-function HistoryView({ history, setHistory, co, products, setProducts, customers, user, role, initialStatus="active" }) {
+function HistoryView({ history, setHistory, co, products, setProducts, customers, setCustomers, user, role, initialStatus="active", previewMode=false }) {
   const [voidTarget,setVoidTarget]=useState(null);
   const [batchBusy,setBatchBusy]=useState(false);
   const batchLock=useRef(false);
@@ -546,6 +569,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
   const clearCheck = () => setChecked({});
 
   const downloadAllBillingDetails = async () => {
+    if(previewMode){alert('スタッフ画面の確認中は出力できません。');return;}
     if (bulkDocs.length===0 || bulkDownloading) return;
     const needsReview = bulkDocs.filter(d=>viewFor(d).issue);
     if (needsReview.length) {
@@ -563,6 +587,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
   };
 
   const downloadPcaSales = () => {
+    if(previewMode){alert('スタッフ画面の確認中は出力できません。');return;}
     if (pcaDownloading) return;
     setPcaDownloading(true);
     try {
@@ -585,6 +610,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
   };
 
   const downloadPcaReceipts = () => {
+    if(previewMode){alert('スタッフ画面の確認中は出力できません。');return;}
     if (pcaReceiptDownloading) return;
     setPcaReceiptDownloading(true);
     try {
@@ -639,10 +665,11 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       if (saved._duplicate) {
         alert("⚠️ 同じ内容の請求書が既にあります（"+saved.docNo+"）。重複作成を防ぎました。");
       } else {
+        await recordOrWarn('請求書','saved',[{code:'saved',field:'document'}],saved.id);
         alert("請求書を発行しました: " + saved.docNo + "\n取引先: " + customer + "\n品目数: " + String(allItems.length));
         generateAndDownloadPDF(saved, co);
       }
-    } catch(e) { alert(e.message); } finally {batchLock.current=false;setBatchBusy(false);}
+    } catch(e) { await recordOrWarn('請求書','save_error',[failureEvent(e)]);alert(e.message); } finally {batchLock.current=false;setBatchBusy(false);}
   };
 
   const asDraft = (src,type=src.docType) => ({...src,docType:type,id:undefined,docNo:undefined,
@@ -652,10 +679,16 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
     if(viewFor(fromDoc).issue) {alert(viewFor(fromDoc).issue);return;}
     try {
       if(fromDoc.docType==="\u7d0d\u54c1\u66f8"&&toType==="\u8acb\u6c42\u66f8") {
+        const inv={...fromDoc,docType:'請求書',date:tod(),items:(fromDoc.items||[]).map(item=>({...item,date:item.date||fromDoc.date}))};
+        const error=validateDocument(inv);
+        if(error){await recordOrWarn('請求書','validation_error',[validationEvent(error)]);alert(error);return;}
+        const issues=pcaInputIssues(inv,customers,products);
+        if(issues.length){await recordOrWarn('請求書','validation_error',issues);alert('PCA出力のため、表示された項目を確認してください。');return;}
         const saved=await db.invoiceDeliveryNotes([fromDoc.id],{date:tod(),bank:co.bankA||""});
+        if(!saved._duplicate)await recordOrWarn('請求書','saved',[{code:'saved',field:'document'}],saved.id);
         setHistory(await db.getDocuments());setSel(saved);
       } else {setEditTarget(asDraft(fromDoc,toType));setSel(null);}
-    } catch(e){alert(e.message);}
+    } catch(e){await recordOrWarn(toType,'save_error',[failureEvent(e)]);alert(e.message);}
   };
   const copyDoc = src => {if(viewFor(src).issue){alert(viewFor(src).issue);return;}setEditTarget(asDraft(src));setSel(null);};
   const repairTax = async () => {
@@ -760,12 +793,14 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       </div>
       <Field label="支払期限"><input style={INP} type="date" value={batchDueDate} onChange={e=>setBatchDueDate(e.target.value)}/></Field>
       <Field label="振込先"><input style={INP} value={batchBank} onChange={e=>setBatchBank(e.target.value)}/></Field>
+      <PcaReadiness doc={{docType:'請求書',date:tod(),customer:checkedCustomers[0],items:checkedList.flatMap(d=>(d.items||[]).map(it=>({...it,date:it.date||d.date})))}} customers={customers} products={products} onCustomersChange={setCustomers} onProductsChange={setProducts} onItemsChange={()=>{}}/>
       <div style={{ display:"flex", gap:8, marginTop:14 }}>
         <Btn onClick={()=>setBatchModal(false)} style={{ flex:1 }}>キャンセル</Btn>
         <Btn variant="primary" disabled={batchBusy} onClick={batchToInvoice} style={{ flex:1 }}>📄 請求書発行＋PDF生成</Btn>
       </div>
     </Modal>}
     {sel&&<Modal title={sel.docType + " - " + sel.customer} onClose={()=>setSel(null)}>
+      {sel.docType==='納品書'&&!sel.voidedAt&&!sel.convertedTo&&<PcaReadiness doc={{...sel,docType:'請求書',date:tod()}} customers={customers} products={products} onCustomersChange={setCustomers} onProductsChange={setProducts} onItemsChange={()=>{}}/>}
       {[["書類番号",sel.docNo],["日付",sel.date],["入金期日",sel.dueDate],["件名",sel.subject],["作成者",sel.savedBy]].map(([l,v])=>v?<div key={l} style={{ display:"flex", gap:8, padding:"5px 0", borderBottom:"1px solid #f3f4f6", fontSize:13 }}><span style={{ color:"#6b7280", minWidth:80 }}>{l}</span><span>{v}</span></div>:null)}
       <p style={{fontSize:12,color:'#64748b'}}>{documentStatus(sel)}{sel.voidReason ? ' / '+sel.voidReason : ''}</p>
       {sel.sourceIds?.length>0&&<p style={{fontSize:12}}>{'\u5143\u306e\u7d0d\u54c1\u66f8: '}{sel.sourceIds.map(id=>history.find(d=>d.id===id)?.docNo||id).join(', ')}</p>}
@@ -798,17 +833,18 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       </div>
     </Modal>}
     {voidTarget&&<VoidDocumentModal doc={voidTarget} onClose={()=>setVoidTarget(null)} onSubmit={async(reason,reverse)=>{await db.voidDocument(voidTarget.id,reason,reverse);setHistory(await db.getDocuments());setProducts(await db.getProducts());}}/>}
-    {editTarget&&<DocEditModal doc={editTarget} co={co} products={products||[]} onClose={()=>setEditTarget(null)} onSave={async(nd)=>{
+    {editTarget&&<DocEditModal doc={editTarget} co={co} products={products||[]} customers={customers} setProducts={setProducts} setCustomers={setCustomers} onClose={()=>setEditTarget(null)} onSave={async(nd)=>{
       const receiptItems = validItems(nd.items);
       const validationError = validateDocument({ ...nd, items: receiptItems });
       if (validationError) { alert(validationError); return; }
       const normalized = normalizeReceiptForSave({ ...nd, items:receiptItems });
       try {
         const updated = editTarget.id ? await db.updateDocument(editTarget.id, normalized) : await db.saveDocument(normalized,user);
+        await recordOrWarn(updated.docType,'saved',[{code:'saved',field:'document'}],updated.id);
         setHistory(await db.getDocuments());
         setProducts(await db.getProducts());
         setEditTarget(null);
-      } catch (e) { alert("編集保存エラー: " + e.message); }
+      } catch (e) { await recordOrWarn(normalized.docType,'save_error',[failureEvent(e)]);alert("編集保存エラー: " + e.message); }
     }}/>}
   </div>;
 }
@@ -1157,6 +1193,9 @@ export default function App() {
   const [routeFilter,setRouteFilter]=useState("");
   const [loadError,setLoadError]=useState("");
   const [role,setRole]=useState("employee");
+  const [previewUser,setPreviewUser]=useState(null);
+  const [previewUsers,setPreviewUsers]=useState(null);
+  const [previewError,setPreviewError]=useState('');
   const [sideOpen, setSideOpen] = useState(window.innerWidth > 600);
 
   useEffect(()=>{
@@ -1167,17 +1206,20 @@ export default function App() {
 
   useEffect(()=>{
     if (!session) return;
+    let active=true;
     (async()=>{
       try {
         const [docs, company, prods, custs, userRole] = await Promise.all([db.getDocuments(), db.getCompany(), db.getProducts(), db.getCustomers(), db.getUserRole()]);
+        if(!active)return;
         setHistory(docs||[]);
         if (company) setCo({...DEFAULT_CO,...company});
         setProducts(prods||[]);
         setCustomers(custs||[]);
         setRole(userRole||"employee");
-      } catch(e) { setLoadError(e.message); }
+      } catch(e) { if(active)setLoadError(e.message); }
     })();
-  }, [session]);
+    return ()=>{active=false;};
+  }, [session,previewUser]);
 
   useEffect(()=>{
     if (!session) return;
@@ -1202,7 +1244,10 @@ export default function App() {
       window.removeEventListener("focus",refreshWhenVisible);
       document.removeEventListener("visibilitychange",refreshWhenVisible);
     };
-  }, [session]);
+  }, [session,previewUser]);
+
+  useEffect(()=>()=>setEmployeePreview(null),[]);
+  useEffect(()=>{if(!session){setEmployeePreview(null);setPreviewUser(null);}},[session]);
 
   useEffect(()=>{ const h=()=>setSideOpen(window.innerWidth>600); window.addEventListener("resize",h); return()=>window.removeEventListener("resize",h); },[]);
 
@@ -1215,7 +1260,12 @@ export default function App() {
     ? <img src={user.user_metadata.avatar_url} style={{ width:28, height:28, borderRadius:"50%" }} alt="avatar"/>
     : <div style={{ width:28, height:28, borderRadius:"50%", background:"rgba(37,99,235,0.5)", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:12, fontWeight:600 }}>{name.charAt(0)}</div>;
 
-  const todayCount = (history||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
+  const visibleHistory=previewUser?history.filter(h=>h.createdBy===previewUser.user_id):history;
+  const effectiveRole=previewUser?'employee':role;
+  const startPreview=person=>{setEmployeePreview(person.user_id);setPreviewUser(person);setPreviewUsers(null);setRouteFilter('');setMasterTab('customers');setTab(initialTab(window.innerWidth));};
+  const endPreview=()=>{setEmployeePreview(null);setPreviewUser(null);setRouteFilter('');setMasterTab('customers');};
+  const showPreviewPicker=async()=>{try{setPreviewError('');setPreviewUsers((await db.listUsers()).filter(u=>u.role==='employee'));}catch(e){setPreviewError(e.message);}};
+  const todayCount = (visibleHistory||[]).filter(h=>h.savedAt?.slice(0,10)===tod()).length;
   const TABS = [["home","\u2302","\u4eca\u65e5\u306e\u696d\u52d9"],["chat","\u270e","\u8ca9\u58f2"],["history","\u2261","\u8acb\u6c42\u30fb\u767a\u884c\u5c65\u6b74"],["products","\u25a6","\u5728\u5eab\u30fb\u5546\u54c1"],["operations","\u21c4","\u5728\u5eab\u30fb\u5165\u91d1\u9023\u643a"],["masters","\u2699","\u30de\u30b9\u30bf\u30fc\u30fb\u8a2d\u5b9a"]];
 
   return <div className="app-shell" style={{ display:"flex", height:"100vh", fontFamily:'"Hiragino Sans","Yu Gothic UI","Meiryo","Noto Sans CJK JP",sans-serif', background:"#f9fafb" }}>
@@ -1260,21 +1310,25 @@ export default function App() {
           {tab==="home"&&"\u4eca\u65e5\u306e\u696d\u52d9"}
           {tab==="masters"&&"\u30de\u30b9\u30bf\u30fc\u30fb\u8a2d\u5b9a"}
           {tab==="chat"&&"💬 書類作成（AI + 直接入力）"}
-          {tab==="history"&&("📋 発行履歴（計" + (history||[]).length + "件）")}
+          {tab==="history"&&("📋 発行履歴（計" + (visibleHistory||[]).length + "件）")}
           {tab==="products"&&"📦 商品マスター"}
           {tab==="customers"&&"👥 顧客マスター"}
           {tab==="settings"&&"⚙️ 設定"}
           {tab==="operations"&&"⇄ 在庫・入金・権限"}
         </h2>
+        {role==='admin'&&!previewUser&&<button style={{marginLeft:'auto'}} onClick={showPreviewPicker}>スタッフ画面を確認</button>}
       </div>
+      {previewError&&<div role="alert">{previewError}</div>}
+      {previewUsers&&<div style={{padding:12,background:'#eff6ff'}}><label>確認するスタッフ <select defaultValue="" onChange={e=>{const selected=previewUsers.find(u=>u.user_id===e.target.value);if(selected)startPreview(selected);}}><option value="">選択してください</option>{previewUsers.map(u=><option key={u.user_id} value={u.user_id}>{u.email}</option>)}</select></label> <button onClick={()=>setPreviewUsers(null)}>閉じる</button>{!previewUsers.length&&<span> スタッフが登録されていません。</span>}</div>}
+      {previewUser&&<div role="status" style={{padding:10,background:'#fef3c7',color:'#78350f',display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}><span>スタッフ画面の確認：{previewUser.email}（読み取り専用・実際の権限は変更されません）</span><button onClick={endPreview}>管理者に戻る</button></div>}
       {loadError&&<div role="alert" style={{padding:14,background:'#fef2f2',color:'#b91c1c'}}>{'\u30c7\u30fc\u30bf\u53d6\u5f97\u5931\u6557: '}{loadError} <button onClick={()=>window.location.reload()}>{'\u518d\u8aad\u8fbc'}</button></div>}
       <div style={{ flex:1, overflow:"hidden" }}>
-        {tab==="home"&&<HomeDashboard history={history} products={products} onNavigate={(tab,filter="")=>{setRouteFilter(filter);setTab(tab);}}/>}
-        {tab==="masters"&&<div style={{display:'flex',flexDirection:'column',height:'100%'}}><div style={{padding:10,display:'flex',gap:8}}><Btn onClick={()=>setMasterTab('customers')}>{'\u9867\u5ba2\u30de\u30b9\u30bf\u30fc'}</Btn>{role==='admin'&&<Btn onClick={()=>setMasterTab('settings')}>{'\u4f1a\u793e\u30fb\u8a2d\u5b9a'}</Btn>}</div><div style={{flex:1,overflow:'auto'}}>{masterTab==='customers'?<CustomersView customers={customers} setCustomers={setCustomers}/>:role==='admin'?<SettingsView co={co} setCo={setCo}/>:<div style={{padding:20}}>管理者権限が必要です</div>}</div></div>}
+        {tab==="home"&&<HomeDashboard history={visibleHistory} products={products} onNavigate={(tab,filter="")=>{setRouteFilter(filter);setTab(tab);}}/>}
+        {tab==="masters"&&<div style={{display:'flex',flexDirection:'column',height:'100%'}}><div style={{padding:10,display:'flex',gap:8}}><Btn onClick={()=>setMasterTab('customers')}>顧客マスター</Btn>{effectiveRole==='admin'&&<><Btn onClick={()=>setMasterTab('settings')}>会社・設定</Btn><Btn onClick={()=>setMasterTab('events')}>入力・エラー記録</Btn></>}</div><div style={{flex:1,overflow:'auto'}}>{masterTab==='customers'?<CustomersView customers={customers} setCustomers={setCustomers}/>:effectiveRole==='admin'?(masterTab==='events'?<InputEventsPanel db={db}/>:<SettingsView co={co} setCo={setCo}/>):<div style={{padding:20}}>管理者権限が必要です</div>}</div></div>}
 
-        {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
-        {tab==="history"&&<HistoryErrorBoundary key={routeFilter||"active"} onHome={()=>setTab("home")}><HistoryView initialStatus={routeFilter||"active"} history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} customers={customers} user={user} role={role}/></HistoryErrorBoundary>}
-        {tab==="operations"&&<OperationsView db={db} products={products} documents={history} role={role} onDocumentsRefresh={async()=>setHistory(await db.getDocuments())}/>}
+        {tab==="chat"&&<ChatView key={previewUser?.user_id||'admin'} co={co} products={products} customers={customers} history={visibleHistory} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
+        {tab==="history"&&<HistoryErrorBoundary key={(previewUser?.user_id||'admin')+(routeFilter||"active")} onHome={()=>setTab("home")}><HistoryView initialStatus={routeFilter||"active"} history={visibleHistory} setHistory={setHistory} co={co} products={products} setProducts={setProducts} customers={customers} setCustomers={setCustomers} user={user} role={effectiveRole} previewMode={!!previewUser}/></HistoryErrorBoundary>}
+        {tab==="operations"&&<OperationsView key={previewUser?.user_id||'admin'} db={db} products={products} documents={visibleHistory} role={effectiveRole} onDocumentsRefresh={async()=>setHistory(await db.getDocuments())}/>}
         {tab==="products"&&<ProductsView initialNegative={routeFilter==="negative"} products={products} setProducts={setProducts} user={user}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}
