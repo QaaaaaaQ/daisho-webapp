@@ -11,6 +11,7 @@ test.before(async()=>{
   await pg.exec(await readFile(new URL('./fixtures/workflow-schema.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261027220243_atomic_sales_workflows.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101000000_operations_modules.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261101031605_pca_manual_payment_and_account_mapping.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
@@ -73,13 +74,14 @@ test('reserve, ship, and cancel preserve independent kg and case balances',async
   assert.equal(Number(row.on_hand_kg),27.5);assert.equal(Number(row.reserved_kg),0);assert.equal(Number(row.on_hand_cases),2);assert.equal(Number(row.reserved_cases),0);
 });
 
-test('payment import is idempotent and manual allocation stays within open balances',async()=>{
-  const imported=await pg.query("SELECT import_payments($1::jsonb) n",[JSON.stringify([{date:'2026-10-31',payer:'Customer',amount:5000,reference:'R1',importKey:'K1'}])]);
-  assert.equal(imported.rows[0].n,1);
-  assert.equal((await pg.query("SELECT import_payments($1::jsonb) n",[JSON.stringify([{date:'2026-10-31',payer:'Customer',amount:5000,reference:'R1',importKey:'K1'}])])).rows[0].n,0);
-  await assert.rejects(pg.query("SELECT import_payments($1::jsonb)",[JSON.stringify([{date:'2026-10-31',payer:'Customer',amount:'NaN',reference:'R2',importKey:'K2'}])]));
+test('manual payment entry is idempotent and audited',async()=>{
+  const request=randomUUID();
+  const paymentId=(await pg.query("SELECT create_manual_payment('2026-10-31','Customer',5000,'R1',$1) id",[request])).rows[0].id;
+  assert.equal((await pg.query("SELECT create_manual_payment('2026-10-31','Customer',5000,'R1',$1) id",[request])).rows[0].id,paymentId);
+  assert.equal((await pg.query("SELECT event FROM payment_audit WHERE payment_id=$1",[paymentId])).rows[0].event,'manual');
+  await assert.rejects(pg.query("SELECT create_manual_payment('2026-10-31','Customer','NaN','R2',$1)",[randomUUID()]));
   await pg.query("INSERT INTO documents(id,doc_type,doc_no,date,customer,items,created_by,tax_summary) VALUES($1,'請求書','INV-TEST','2026-10-31','Customer','[]',$2,'{\"version\":2,\"total\":3000}')",[invoiceId,actor]);
-  const payment=(await pg.query("SELECT id FROM payments WHERE import_key='K1'")).rows[0].id;
+  const payment=paymentId;
   const allocationRequest=randomUUID();
   const result=(await pg.query("SELECT allocate_payment($1,$2,2500,$3) result",[payment,invoiceId,allocationRequest])).rows[0].result;
   assert.equal(result.invoicePaid,2500);assert.equal(result.unapplied,2500);

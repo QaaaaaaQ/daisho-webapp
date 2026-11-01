@@ -53,6 +53,7 @@ export const db = {
     if (!data) return null;
     return { name: data.name, manager: data.manager, addr: data.addr, tel: data.tel, fax: data.fax,
       regNo: data.reg_no, bankA: data.bank_a, bankB: data.bank_b, adminEmails: data.admin_emails || "",
+      pcaBankAccountCode:data.pca_bank_account_code||"", pcaBankSubaccountCode:data.pca_bank_subaccount_code||"", pcaReceivableAccountCode:data.pca_receivable_account_code||"",
       sealImg: data.seal_img || "", personSealImg: data.person_seal_img || "", logoImg: data.logo_img || "", _id: data.id };
   },
   async saveCompany(co) {
@@ -60,6 +61,7 @@ export const db = {
     if (findError) throw findError;
     const payload = { name: co.name, manager: co.manager, addr: co.addr, tel: co.tel, fax: co.fax,
       reg_no: co.regNo, bank_a: co.bankA, bank_b: co.bankB, admin_emails: co.adminEmails || "",
+      pca_bank_account_code:co.pcaBankAccountCode||"", pca_bank_subaccount_code:co.pcaBankSubaccountCode||"", pca_receivable_account_code:co.pcaReceivableAccountCode||"",
       seal_img: co.sealImg || null, person_seal_img: co.personSealImg || null, logo_img: co.logoImg || null };
     if (ex) { const { error } = await supabase.from("company_settings").update(payload).eq("id", ex.id).select("id").single(); if (error) throw error; }
     else { const { error } = await supabase.from("company_settings").insert([payload]); if (error) throw error; }
@@ -133,8 +135,12 @@ export const db = {
     const {data,error}=await supabase.from('payments').select('*,payment_allocations(id,document_id,amount,documents(doc_no,customer))').order('payment_date',{ascending:false});
     if(error)throw error; return data||[];
   },
-  async importPayments(rows) {
-    const {data,error}=await supabase.rpc('import_payments',{p_rows:rows}); if(error)throw error; return data;
+  async createManualPayment(payment) {
+    const key=`daisho-manual-payment:${payment.date}:${String(payment.payer).trim().normalize('NFKC')}:${Number(payment.amount)}:${String(payment.reference||'').trim().normalize('NFKC')}`;
+    let requestId;try{requestId=sessionStorage.getItem(key);}catch{}
+    requestId||=crypto.randomUUID();try{sessionStorage.setItem(key,requestId);}catch{}
+    const {data,error}=await supabase.rpc('create_manual_payment',{p_payment_date:payment.date,p_payer:payment.payer,p_amount:Number(payment.amount),p_reference:payment.reference||'',p_request_id:requestId});
+    if(error)throw error;try{sessionStorage.removeItem(key);}catch{} return data;
   },
   async allocatePayment(paymentId,documentId,amount) {
     const key=`daisho-payment-allocation:${paymentId}:${documentId}:${Number(amount)}`;
@@ -159,7 +165,7 @@ export const db = {
   },
   async saveCustomer(c) {
     const payload = { code: c.code, name: c.name, addr: c.addr, contact: c.contact,
-      tel: c.tel, bank: c.bank, due_days: c.dueDays, note: c.note };
+      tel: c.tel, bank: c.bank, due_days: c.dueDays, note: c.note, pca_subaccount_code:c.pcaSubaccountCode||"" };
     if (c.id) {
       const { error } = await supabase.from("customers").update(payload).eq("id", c.id).select("id").single();
       if (error) throw error;

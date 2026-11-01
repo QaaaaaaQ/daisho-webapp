@@ -958,6 +958,7 @@ function CustomersView({ customers, setCustomers }) {
         <Field label="担当者"><input style={INP} value={f.contact||""} onChange={e=>upd("contact",e.target.value)}/></Field>
         <Field label="TEL"><input style={INP} value={f.tel||""} onChange={e=>upd("tel",e.target.value)}/></Field>
         <Field label="支払いサイト（日）"><input style={INP} type="number" value={f.dueDays||30} onChange={e=>upd("dueDays",e.target.value)}/></Field>
+        <Field label="PCA補助コード"><input style={INP} value={f.pcaSubaccountCode||""} onChange={e=>upd("pcaSubaccountCode",e.target.value)} placeholder="PCAで登録した補助科目コード"/></Field>
       </div>
       <Field label="振込先（請求書デフォルト）"><input style={{ ...INP, marginTop:4 }} value={f.bank||""} onChange={e=>upd("bank",e.target.value)} placeholder="りそな銀行..."/></Field>
       <Field label="備考"><input style={{ ...INP, marginTop:4 }} value={f.note||""} onChange={e=>upd("note",e.target.value)}/></Field>
@@ -1010,6 +1011,11 @@ function SettingsView({ co, setCo }) {
       {f("適格請求書登録番号","regNo","T4120001218286")}
       {f("振込先A（主）","bankA","りそな銀行 新大阪駅前支店 普通0436583")}
       {f("振込先B（副）","bankB","三井住友銀行 神戸営業部 普通預金1663502")}
+      <div style={{ fontWeight:600, fontSize:13, margin:"18px 0 8px", paddingBottom:8, borderBottom:"1px solid #f0f0f0" }}>PCA仕訳出力（標準形式 Version 7）</div>
+      {f("PCA 預金科目コード","pcaBankAccountCode","PCAの勘定科目コード（半角英数字）")}
+      {f("PCA 預金補助コード（任意）","pcaBankSubaccountCode","預金口座の補助コード")}
+      {f("PCA 売掛金科目コード","pcaReceivableAccountCode","PCAの勘定科目コード（半角英数字）")}
+      <div style={{ fontSize:11, color:"#92400e", marginBottom:10 }}>コードはPCAの勘定科目・補助科目一覧に合わせて入力してください。空欄ではPCA仕訳を出力できません。</div>
       {f("管理者メール（カンマ区切り）","adminEmails","shin@kobedaisho.com")}
       <div style={{ fontSize:11, color:"#6b7280", marginBottom:10 }}>管理者は全員の発行履歴・明細CSVを閲覧できます。普通ユーザーは自分の作成分のみです。</div>
       <Btn variant="primary" onClick={save} small>保存</Btn>
@@ -1157,7 +1163,7 @@ export default function App() {
 
         {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
         {tab==="history"&&<HistoryErrorBoundary key={routeFilter||"active"} onHome={()=>setTab("home")}><HistoryView initialStatus={routeFilter||"active"} history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} user={user} role={role}/></HistoryErrorBoundary>}
-        {tab==="operations"&&<OperationsView db={db} products={products} documents={history} role={role} onDocumentsRefresh={async()=>setHistory(await db.getDocuments())}/>}
+        {tab==="operations"&&<OperationsView db={db} products={products} documents={history} customers={customers} company={co} role={role} onDocumentsRefresh={async()=>setHistory(await db.getDocuments())}/>}
         {tab==="products"&&<ProductsView initialNegative={routeFilter==="negative"} products={products} setProducts={setProducts} user={user}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}

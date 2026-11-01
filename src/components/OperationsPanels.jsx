@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { parsePaymentCsv, paymentCsvHeaders, paymentImportKey } from '../lib/payments.js';
+import { buildPcaJournalCsv, eligiblePcaPayments } from '../lib/pca-journal.js';
 import { documentsToCSV } from '../lib/csv.js';
 
 const fieldStyle={padding:'7px 9px',border:'1px solid #d1d5db',borderRadius:6,fontSize:12,fontFamily:'inherit'};
@@ -7,13 +7,14 @@ const buttonStyle={padding:'7px 11px',border:0,borderRadius:6,background:'#1a274
 const cardStyle={background:'#fff',border:'1px solid #e5e7eb',borderRadius:9,padding:16,margin:14};
 function downloadCsv(name, content) { const a=document.createElement('a');const url=URL.createObjectURL(new Blob(['\uFEFF',content],{type:'text/csv;charset=utf-8'}));a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),500); }
 
-export function OperationsView({db,products,documents,role,onDocumentsRefresh}) {
+export function OperationsView({db,products,documents,customers,company,role,onDocumentsRefresh}) {
   const [inventory,setInventory]=useState({locations:[],lots:[],reservations:[]});
   const [payments,setPayments]=useState([]);
   const [users,setUsers]=useState([]);
-  const [csvText,setCsvText]=useState('');const [headers,setHeaders]=useState([]);const [mapping,setMapping]=useState({});
   const [locationId,setLocationId]=useState('');const [docId,setDocId]=useState('');const [lot,setLot]=useState({});
   const [paymentId,setPaymentId]=useState('');const [invoiceId,setInvoiceId]=useState('');const [allocation,setAllocation]=useState('');
+  const [newPayment,setNewPayment]=useState({date:new Date().toLocaleDateString('sv-SE'),payer:'',amount:'',reference:''});
+  const [pcaPeriod,setPcaPeriod]=useState(()=>{const today=new Date().toLocaleDateString('sv-SE');return{from:`${today.slice(0,7)}-01`,to:today};});
   const [busy,setBusy]=useState(false);const [message,setMessage]=useState('');
   const admin=role==='admin';
   const load=async()=>{try{const [i,p]=await Promise.all([db.getInventory(),db.getPayments()]);setInventory(i);setPayments(p);if(!locationId)setLocationId(i.locations[0]?.id||'');}catch(e){setMessage(e.message);}};
@@ -22,12 +23,12 @@ export function OperationsView({db,products,documents,role,onDocumentsRefresh}) 
   const selectedReservations=inventory.reservations.filter(r=>r.document_id===docId);
   const hasActiveReservation=selectedReservations.some(r=>r.status==='reserved');
   const hasShippedReservation=selectedReservations.some(r=>r.status==='shipped');
-  const paymentPreview=useMemo(()=>{if(!csvText||!Object.keys(mapping).length)return[];try{return parsePaymentCsv(csvText,mapping);}catch{return[];}},[csvText,mapping]);
   const totalAllocated=p=>Number((p.payment_allocations||[]).reduce((n,a)=>n+Number(a.amount||0),0));
   const action=async fn=>{setBusy(true);setMessage('');try{await fn();setMessage('処理が完了しました');await load();}catch(e){setMessage(e.message||'処理に失敗しました');}finally{setBusy(false);}};
-  const onFile=async e=>{const file=e.target.files?.[0];if(!file)return;const text=await file.text();try{const h=paymentCsvHeaders(text);setCsvText(text);setHeaders(h);setMapping({date:h[0],payer:h[1]||h[0],amount:h[2]||h[0],reference:h[3]||h[0]});setMessage('CSVの列を指定し、取込前に内容を確認してください');}catch(err){setMessage(err.message);}};
-  const importRows=()=>action(async()=>{const rows=paymentPreview.map(p=>({...p,importKey:paymentImportKey(p)}));if(!rows.length)throw new Error('取り込める行がありません');const n=await db.importPayments(rows);setMessage(`${n}件を追加しました（重複行は再登録していません）`);setCsvText('');setHeaders([]);});
-  const exportPayments=()=>{const rows=[['入金日','振込人','入金額','摘要','請求書番号','取引先','割当額','未割当額']];for(const p of payments){const allocs=p.payment_allocations||[];if(!allocs.length)rows.push([p.payment_date,p.payer,p.amount,p.reference,'','','',p.amount]);for(const a of allocs)rows.push([p.payment_date,p.payer,p.amount,p.reference,a.documents?.doc_no||'',a.documents?.customer||'',a.amount,Number(p.amount)-totalAllocated(p)]);}const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';downloadCsv('PCA_入金照合.csv',rows.map(r=>r.map(esc).join(',')).join('\r\n'));};
+  const eligiblePayments=useMemo(()=>eligiblePcaPayments(payments),[payments]);
+  const periodPayments=useMemo(()=>eligiblePayments.filter(p=>p.payment_date>=pcaPeriod.from&&p.payment_date<=pcaPeriod.to),[eligiblePayments,pcaPeriod]);
+  const exportPayments=()=>{const rows=[['入金日','振込人','入金額','摘要','請求書番号','取引先','割当額','未割当額']];for(const p of payments){const allocs=p.payment_allocations||[];if(!allocs.length)rows.push([p.payment_date,p.payer,p.amount,p.reference,'','','',p.amount]);for(const a of allocs)rows.push([p.payment_date,p.payer,p.amount,p.reference,a.documents?.doc_no||'',a.documents?.customer||'',a.amount,Number(p.amount)-totalAllocated(p)]);}const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';downloadCsv('入金照合一覧.csv',rows.map(r=>r.map(esc).join(',')).join('\r\n'));};
+  const exportPca=()=>{try{if(!pcaPeriod.from||!pcaPeriod.to||pcaPeriod.from>pcaPeriod.to)throw new Error('PCA出力期間を確認してください');const content=buildPcaJournalCsv(periodPayments,customers,company);downloadCsv(`PCA_入金仕訳_Ver7_${pcaPeriod.from}_${pcaPeriod.to}.csv`,content);setMessage(`${periodPayments.length}件の入金仕訳をPCA標準形式 Version 7 で出力しました`);}catch(e){setMessage(e.message);}};
   const createLocation=()=>{const name=window.prompt('倉庫名');if(name)action(()=>db.createInventoryLocation(name));};
   const createLot=()=>action(async()=>{if(!lot.productId||!locationId)throw new Error('商品と倉庫を選択してください');await db.createInventoryLot({...lot,locationId});setLot({});});
   const setRole=async(userId,next)=>{await action(()=>db.setUserRole(userId,next));setUsers(await db.listUsers());};
@@ -58,11 +59,23 @@ export function OperationsView({db,products,documents,role,onDocumentsRefresh}) 
       <div style={{marginTop:14}}><h4 style={{fontSize:13,margin:'0 0 6px'}}>予約・出庫状況</h4>{inventory.reservations.length?inventory.reservations.map(r=><div key={r.id} style={{padding:'5px 0',borderTop:'1px solid #f1f5f9',fontSize:11}}>{r.documents?.doc_no||'書類'} · {r.products?.name||'商品'} · {Number(r.quantity_kg).toLocaleString()}kg / {r.case_count}箱 · {{reserved:'予約中',shipped:'出庫済み',released:'解放済み'}[r.status]||r.status}</div>):<div style={{fontSize:11,color:'#64748b'}}>予約履歴はありません</div>}</div>
     </div>
     <div style={cardStyle}>
-      <h3 style={{margin:'0 0 8px',fontSize:15}}>入金CSV / PCA向け手動照合</h3>
-      <p style={{fontSize:12,color:'#64748b'}}>銀行CSVは見出しを手動指定し、取込前にプレビューします。同一データは重複登録しません。照合CSVには入金・請求書・割当・未割当残額を出力します。勘定科目・税区分の設定を伴うPCA仕訳インポートには対応していません。</p>
-      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}><input type="file" accept=".csv,text/csv" onChange={onFile}/><button style={buttonStyle} onClick={exportPayments}>入金・照合CSVを出力</button><button style={{...buttonStyle,background:'#475569'}} onClick={()=>downloadCsv('PCA_請求書明細.csv',documentsToCSV(documents.filter(d=>!d.voidedAt)))}>請求書明細CSVを出力</button></div>
-      {headers.length>0&&<div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}}>{[['date','日付'],['payer','振込人'],['amount','金額'],['reference','摘要']].map(([k,label])=><label key={k} style={{fontSize:11}}>{label}<select style={{...fieldStyle,marginLeft:4}} value={mapping[k]} onChange={e=>setMapping(x=>({...x,[k]:e.target.value}))}>{headers.map((h,i)=><option key={i} value={h}>{h}</option>)}</select></label>)}<button style={buttonStyle} disabled={!paymentPreview.length||busy} onClick={importRows}>プレビュー確認後に入金登録</button></div>}
-      {paymentPreview.length>0&&<div style={{maxHeight:130,overflow:'auto',fontSize:11,marginTop:9}}>{paymentPreview.slice(0,8).map((p,i)=><div key={i}>{p.date} · {p.payer} · ¥{p.amount.toLocaleString()} · {p.reference}</div>)}{paymentPreview.length>8&&<div>ほか {paymentPreview.length-8} 件</div>}</div>}
+      <h3 style={{margin:'0 0 8px',fontSize:15}}>入金登録・手動照合 / PCA仕訳出力</h3>
+      <p style={{fontSize:12,color:'#64748b'}}>入金は手入力し、請求書へ手動で割り当てて照合します。全額割当済みの入金だけをPCA会計標準形式 Version 7（仕訳データ81項目）で出力します。未割当残額がある入金は二重仕訳防止のため出力対象外です。科目コードは「会社・設定」、取引先補助コードは顧客マスターで登録してください。</p>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+        <input style={fieldStyle} type="date" aria-label="入金日" value={newPayment.date} onChange={e=>setNewPayment(x=>({...x,date:e.target.value}))}/>
+        <input style={fieldStyle} placeholder="振込人" value={newPayment.payer} onChange={e=>setNewPayment(x=>({...x,payer:e.target.value}))}/>
+        <input style={fieldStyle} type="number" min="1" step="1" placeholder="入金額（円）" value={newPayment.amount} onChange={e=>setNewPayment(x=>({...x,amount:e.target.value}))}/>
+        <input style={fieldStyle} placeholder="摘要（任意）" value={newPayment.reference} onChange={e=>setNewPayment(x=>({...x,reference:e.target.value}))}/>
+        <button style={buttonStyle} disabled={busy||!newPayment.date||!newPayment.payer||!newPayment.amount} onClick={()=>action(async()=>{await db.createManualPayment(newPayment);setNewPayment(x=>({...x,payer:'',amount:'',reference:''}));})}>入金を登録</button>
+      </div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginTop:12}}>
+        <label style={{fontSize:11}}>対象期間 <input style={fieldStyle} type="date" aria-label="PCA出力開始日" value={pcaPeriod.from} onChange={e=>setPcaPeriod(x=>({...x,from:e.target.value}))}/></label>
+        <span>〜</span><input style={fieldStyle} type="date" aria-label="PCA出力終了日" value={pcaPeriod.to} onChange={e=>setPcaPeriod(x=>({...x,to:e.target.value}))}/>
+        <button style={buttonStyle} disabled={busy||!periodPayments.length} onClick={exportPca}>PCA入金仕訳ファイルを出力（期間内・全額照合済み {periodPayments.length} 件）</button>
+        <button style={{...buttonStyle,background:'#475569'}} onClick={exportPayments}>照合一覧CSVを出力</button>
+        <button style={{...buttonStyle,background:'#475569'}} onClick={()=>downloadCsv('請求書明細.csv',documentsToCSV(documents.filter(d=>!d.voidedAt)))}>請求書明細CSVを出力</button>
+      </div>
+      <p style={{fontSize:11,color:'#92400e',margin:'8px 0 0'}}>同じ期間のファイルをPCAへ再受入すると仕訳が重複する場合があります。再出力時は受入済み期間を確認してください。</p>
       <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginTop:12}}><select style={fieldStyle} value={paymentId} onChange={e=>setPaymentId(e.target.value)}><option value="">入金を選択</option>{payments.map(p=><option key={p.id} value={p.id}>{p.payment_date} · {p.payer} · ¥{Number(p.amount).toLocaleString()}（未割当 ¥{(Number(p.amount)-totalAllocated(p)).toLocaleString()}）</option>)}</select><select style={fieldStyle} value={invoiceId} onChange={e=>setInvoiceId(e.target.value)}><option value="">請求書を選択</option>{documents.filter(d=>d.docType==='請求書'&&!d.voidedAt).map(d=><option key={d.id} value={d.id}>{d.docNo} · {d.customer} · ¥{Number(d.taxSummary?.total??d.amount??0).toLocaleString()}</option>)}</select><input style={fieldStyle} type="number" min="1" placeholder="割当額" value={allocation} onChange={e=>setAllocation(e.target.value)}/><button style={buttonStyle} disabled={busy||!paymentId||!invoiceId||!allocation} onClick={()=>action(async()=>{await db.allocatePayment(paymentId,invoiceId,allocation);setAllocation('');await load();})}>手動で割当・照合</button></div>
     </div>
     {admin&&<div style={cardStyle}><h3 style={{margin:'0 0 8px',fontSize:15}}>ユーザー権限</h3><button style={buttonStyle} onClick={fetchUsers}>ユーザー一覧</button>{users.map(u=><div key={u.user_id} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:'1px solid #f1f5f9',fontSize:12}}><span>{u.email}</span><select style={fieldStyle} value={u.role} onChange={e=>setRole(u.user_id,e.target.value)}><option value="employee">普通员工</option><option value="admin">管理员</option></select></div>)}</div>}
