@@ -158,12 +158,12 @@ export const db = {
     if (error) throw error;
     return (data || []).map(function(r) {
       return { id: r.id, code: r.code, name: r.name, addr: r.addr, contact: r.contact,
-        tel: r.tel, bank: r.bank, dueDays: r.due_days, note: r.note, documentCategory:r.document_category, pcaSubaccountCode:r.pca_subaccount_code };
+        tel: r.tel, bank: r.bank, dueDays: r.due_days, note: r.note, documentCategory:r.document_category };
     });
   },
   async saveCustomer(c) {
     const payload = { code: c.code, name: c.name, addr: c.addr, contact: c.contact,
-      tel: c.tel, bank: c.bank, due_days: c.dueDays, note: c.note, pca_subaccount_code:c.pcaSubaccountCode||"" };
+      tel: c.tel, bank: c.bank, due_days: c.dueDays, note: c.note };
     if (c.id) {
       const { error } = await supabase.from("customers").update(payload).eq("id", c.id).select("id").single();
       if (error) throw error;

@@ -126,7 +126,7 @@ function pcaRow(doc, line, customerMaster) {
   row[4] = '1';
   row[7] = RECEIVABLE_ACCOUNT.code;
   row[8] = RECEIVABLE_ACCOUNT.name;
-  row[9] = String(customerMaster.pcaSubaccountCode || '').trim();
+  row[9] = String(customerMaster.code || '').trim();
   row[10] = customerMaster.name;
   row[11] = '00';
   row[12] = '対象外';
@@ -156,7 +156,7 @@ export function pcaInvoicesToCSV(documents, customers, products, fromMonth, toMo
   }
   const eligible = [];
   const unknownCustomers = [];
-  const customersWithoutPcaCode = [];
+  const customersWithoutCode = [];
   const ambiguousCustomers = [];
   (documents || []).filter(doc => doc?.docType === '請求書' && !doc.voidedAt).forEach(doc => {
     const lines = rowsForInvoice(doc, products, fromMonth, toMonth);
@@ -170,15 +170,15 @@ export function pcaInvoicesToCSV(documents, customers, products, fromMonth, toMo
       unknownCustomers.push(doc.customer || '（取引先未設定）');
       return;
     }
-    if (!String(match.customer.pcaSubaccountCode || '').trim()) {
-      customersWithoutPcaCode.push(match.customer.name || doc.customer || '（取引先未設定）');
+    if (!String(match.customer.code || '').trim()) {
+      customersWithoutCode.push(match.customer.name || doc.customer || '（取引先未設定）');
       return;
     }
     eligible.push(...lines.map(line => ({ doc, line, customer: match.customer })));
   });
   if (ambiguousCustomers.length) throw new Error('顧客マスターで名称が重複している取引先があります: ' + [...new Set(ambiguousCustomers)].join('、'));
   if (unknownCustomers.length) throw new Error('顧客マスター未登録の取引先があります: ' + [...new Set(unknownCustomers)].join('、'));
-  if (customersWithoutPcaCode.length) throw new Error('PCA補助科目コード未入力の取引先があります: ' + [...new Set(customersWithoutPcaCode)].join('、'));
+  if (customersWithoutCode.length) throw new Error('顧客マスターのコード未入力の取引先があります: ' + [...new Set(customersWithoutCode)].join('、'));
   if (!eligible.length) throw new Error('指定期間に出力できる請求書明細がありません。');
   return eligible.map(({ doc, line, customer }) => pcaRow(doc, line, customer).map(quoteCell).join(',')).join('\r\n') + '\r\n';
 }
