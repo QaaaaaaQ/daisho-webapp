@@ -1171,6 +1171,31 @@ export default function App() {
     })();
   }, [session]);
 
+  useEffect(()=>{
+    if (!session) return;
+    let active=true;
+    let refreshing=false;
+    let lastRefreshAt=Date.now();
+    const refreshHistory=async()=>{
+      if(!active||refreshing||Date.now()-lastRefreshAt<3000)return;
+      refreshing=true;
+      lastRefreshAt=Date.now();
+      try{
+        const [docs,prods]=await Promise.all([db.getDocuments(),db.getProducts()]);
+        if(active){setHistory(docs||[]);setProducts(prods||[]);setLoadError("");}
+      }catch(e){if(active)setLoadError(e.message);}
+      finally{refreshing=false;}
+    };
+    const refreshWhenVisible=()=>{if(document.visibilityState==="visible")void refreshHistory();};
+    window.addEventListener("focus",refreshWhenVisible);
+    document.addEventListener("visibilitychange",refreshWhenVisible);
+    return()=>{
+      active=false;
+      window.removeEventListener("focus",refreshWhenVisible);
+      document.removeEventListener("visibilitychange",refreshWhenVisible);
+    };
+  }, [session]);
+
   useEffect(()=>{ const h=()=>setSideOpen(window.innerWidth>600); window.addEventListener("resize",h); return()=>window.removeEventListener("resize",h); },[]);
 
   if (appLoading) return <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100vh", fontFamily:"sans-serif", color:"#6b7280", fontSize:14 }}>読み込み中...</div>;
