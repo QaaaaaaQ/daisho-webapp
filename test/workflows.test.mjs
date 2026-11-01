@@ -10,7 +10,9 @@ let pg;
 test.before(async()=>{
  pg=new PGlite();
  await pg.exec(await readFile(new URL('./fixtures/workflow-schema.sql',import.meta.url),'utf8'));
+ await pg.query("INSERT INTO documents(doc_type,doc_no,customer) VALUES ('請求書','INV-OLD-1','Legacy invoice customer'),('領収書','REC-OLD-1','Receipt-only customer'),('納品書','DEL-OLD-1','Delivery-only customer')");
  await pg.exec(await readFile(new URL('../supabase/migrations/20261027220243_atomic_sales_workflows.sql',import.meta.url),'utf8'));
+ await pg.exec(await readFile(new URL('../supabase/migrations/20261101050000_customer_master_auto_sync.sql',import.meta.url),'utf8'));
  await pg.query('INSERT INTO auth.users VALUES($1,$2),($3,$4)',[USER,'one@example.invalid',OTHER,'two@example.invalid']);
  await pg.query('INSERT INTO products(id,code,name,unit,stock)VALUES($1,$2,$3,$4,1000)',[PRODUCT,'TEST-1','Example','kg']);
  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[USER]);
@@ -47,6 +49,23 @@ test('direct invoice deducts only on explicit shipment choice',async()=>{
 });
 test('amount-only receipt has unknown tax, never guessed 8 percent',async()=>{
  const out=await call('create',{doc:{...doc(REC,[]),amount:1100}});assert.equal(out.document.tax_summary,null);assert.equal(out.document.amount,1100);
+});
+test('migration backfills invoice and receipt customers without changing documents or adding delivery-only customers',async()=>{
+ const masters=(await pg.query("SELECT name,code FROM customers WHERE name IN ('Legacy invoice customer','Receipt-only customer','Delivery-only customer') ORDER BY name")).rows;
+ assert.deepEqual(masters,[{name:'Legacy invoice customer',code:null},{name:'Receipt-only customer',code:null}]);
+ assert.equal((await pg.query("SELECT customer FROM documents WHERE doc_no='INV-OLD-1'")).rows[0].customer,'Legacy invoice customer');
+});
+test('new invoices and receipts add a blank-code customer master once and preserve existing codes',async()=>{
+ const first=(await call('create',{doc:{...doc(INV),customer:'株式会社 Auto-created customer'}})).document;
+ let rows=(await pg.query("SELECT name,code FROM customers WHERE app_private.customer_name_key(name)=app_private.customer_name_key($1)",['Auto-created customer株式会社'])).rows;
+ assert.equal(rows.length,1);assert.equal(rows[0].name,'株式会社 Auto-created customer');assert.equal(rows[0].code,null);
+ await call('create',{doc:{...doc(REC),customer:'Auto-created customer合同会社'}});
+ rows=(await pg.query("SELECT name,code FROM customers WHERE app_private.customer_name_key(name)=app_private.customer_name_key($1)",['Auto-created customer'])).rows;
+ assert.equal(rows.length,1);assert.equal(rows[0].code,null);assert.ok(first.id);
+ await pg.query("INSERT INTO customers(name,code) VALUES('Existing coded customer','C-102')");
+ await call('create',{doc:{...doc(INV),customer:'Existing coded customer株式会社'}});
+ rows=(await pg.query("SELECT name,code FROM customers WHERE app_private.customer_name_key(name)=app_private.customer_name_key($1)",['Existing coded customer'])).rows;
+ assert.deepEqual(rows,[{name:'Existing coded customer',code:'C-102'}]);
 });
 test('quantity edit applies only difference; price edit does not move stock',async()=>{
  let d=(await call('create',{doc:doc(DEL,[item(10)])})).document;const before=await stock();
