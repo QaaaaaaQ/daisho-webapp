@@ -9,6 +9,7 @@ import { useState, useEffect, useRef } from "react";
 import { supabase, db, aiParse, aiChat, signInWithGoogle, autoRegisterAndStock, getStockLogs, receiveStock } from "./lib/supabase";
 import { generateAndDownloadPDF, calcTax } from "./lib/pdf";
 import { downloadDocumentsCSV } from "./lib/csv";
+import { pcaInvoicesToCSV } from "./lib/pca-sales.js";
 import { draftItem, localDate, validItems, validateDocument, documentTotal } from "./lib/domain";
 
 const tod = () => localDate();
@@ -490,7 +491,7 @@ function ChatView({ co, products, customers, history, setHistory, setProducts, s
   </div>;
 }
 
-function HistoryView({ history, setHistory, co, products, setProducts, user, role, initialStatus="active" }) {
+function HistoryView({ history, setHistory, co, products, setProducts, customers, user, role, initialStatus="active" }) {
   const [voidTarget,setVoidTarget]=useState(null);
   const [batchBusy,setBatchBusy]=useState(false);
   const batchLock=useRef(false);
@@ -505,6 +506,9 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, rol
   const [batchDueDate, setBatchDueDate] = useState("");
   const [batchBank, setBatchBank] = useState(co.bankA||"");
   const [bulkDownloading, setBulkDownloading] = useState(false);
+  const [pcaDownloading, setPcaDownloading] = useState(false);
+  const [pcaFromMonth, setPcaFromMonth] = useState(tod().slice(0, 7));
+  const [pcaToMonth, setPcaToMonth] = useState(tod().slice(0, 7));
   const [taxRates,setTaxRates]=useState([]);
 
   const viewFor = doc => historyDocumentView(doc);
@@ -540,6 +544,28 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, rol
       alert("明細CSV生成エラー: " + e.message);
     } finally {
       setBulkDownloading(false);
+    }
+  };
+
+  const downloadPcaSales = () => {
+    if (pcaDownloading) return;
+    setPcaDownloading(true);
+    try {
+      const csv = pcaInvoicesToCSV(history, customers, pcaFromMonth, pcaToMonth);
+      const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `PCA仕訳_請求書_${pcaFromMonth}-${pcaToMonth}_${tod()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      alert(`PCA売上仕訳CSVを出力しました（${csv.trimEnd().split("\r\n").length}明細）。`);
+    } catch(e) {
+      alert("PCA売上仕訳CSVを作成できません: " + (e?.message || String(e)));
+    } finally {
+      setPcaDownloading(false);
     }
   };
 
@@ -623,6 +649,16 @@ function HistoryView({ history, setHistory, co, products, setProducts, user, rol
         {bulkDownloading?"⏳ CSV作成中...":"📥 請求書・領収書の明細CSV（"+bulkDocs.length+"件）"}
       </Btn>
       <span style={{ fontSize:11, color:"#9ca3af", whiteSpace:"nowrap" }}>{filt.length + "件 / 本日" + totalToday + "件"}</span>
+    </div>
+    <div style={{ padding:"8px 18px", borderBottom:"1px solid #dbeafe", background:"#f8fbff", display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+      <span style={{ fontSize:12, fontWeight:600, color:N }}>売上データ出力</span>
+      <span style={{ fontSize:11, color:"#64748b" }}>請求書の明細日付で期間指定</span>
+      <input aria-label="PCA売上出力の開始月" type="month" value={pcaFromMonth} onChange={e=>setPcaFromMonth(e.target.value)} style={{ ...INP, width:132, padding:"5px 6px", fontSize:11 }}/>
+      <span>〜</span>
+      <input aria-label="PCA売上出力の終了月" type="month" value={pcaToMonth} onChange={e=>setPcaToMonth(e.target.value)} style={{ ...INP, width:132, padding:"5px 6px", fontSize:11 }}/>
+      <Btn small variant="blue" onClick={downloadPcaSales} disabled={pcaDownloading||!pcaFromMonth||!pcaToMonth} title="請求書の売上明細をPCA仕訳CSVへ変換">
+        {pcaDownloading?"⏳ PCA CSV作成中...":"📤 PCA仕訳CSVを出力（45列）"}
+      </Btn>
     </div>
     {batchMode&&checkedList.length>0&&<div style={{ padding:"8px 18px", background:"#eff6ff", borderBottom:"1px solid #bfdbfe", fontSize:12 }}>
       {checkedCustomers.length===1
@@ -1011,11 +1047,6 @@ function SettingsView({ co, setCo }) {
       {f("適格請求書登録番号","regNo","T4120001218286")}
       {f("振込先A（主）","bankA","りそな銀行 新大阪駅前支店 普通0436583")}
       {f("振込先B（副）","bankB","三井住友銀行 神戸営業部 普通預金1663502")}
-      <div style={{ fontWeight:600, fontSize:13, margin:"18px 0 8px", paddingBottom:8, borderBottom:"1px solid #f0f0f0" }}>PCA仕訳出力（標準形式 Version 7）</div>
-      {f("PCA 預金科目コード","pcaBankAccountCode","PCAの勘定科目コード（半角英数字）")}
-      {f("PCA 預金補助コード（任意）","pcaBankSubaccountCode","預金口座の補助コード")}
-      {f("PCA 売掛金科目コード","pcaReceivableAccountCode","PCAの勘定科目コード（半角英数字）")}
-      <div style={{ fontSize:11, color:"#92400e", marginBottom:10 }}>コードはPCAの勘定科目・補助科目一覧に合わせて入力してください。空欄ではPCA仕訳を出力できません。</div>
       {f("管理者メール（カンマ区切り）","adminEmails","shin@kobedaisho.com")}
       <div style={{ fontSize:11, color:"#6b7280", marginBottom:10 }}>管理者は全員の発行履歴・明細CSVを閲覧できます。普通ユーザーは自分の作成分のみです。</div>
       <Btn variant="primary" onClick={save} small>保存</Btn>
@@ -1162,8 +1193,8 @@ export default function App() {
         {tab==="masters"&&<div style={{display:'flex',flexDirection:'column',height:'100%'}}><div style={{padding:10,display:'flex',gap:8}}><Btn onClick={()=>setMasterTab('customers')}>{'\u9867\u5ba2\u30de\u30b9\u30bf\u30fc'}</Btn>{role==='admin'&&<Btn onClick={()=>setMasterTab('settings')}>{'\u4f1a\u793e\u30fb\u8a2d\u5b9a'}</Btn>}</div><div style={{flex:1,overflow:'auto'}}>{masterTab==='customers'?<CustomersView customers={customers} setCustomers={setCustomers}/>:role==='admin'?<SettingsView co={co} setCo={setCo}/>:<div style={{padding:20}}>管理者権限が必要です</div>}</div></div>}
 
         {tab==="chat"&&<ChatView co={co} products={products} customers={customers} history={history} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
-        {tab==="history"&&<HistoryErrorBoundary key={routeFilter||"active"} onHome={()=>setTab("home")}><HistoryView initialStatus={routeFilter||"active"} history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} user={user} role={role}/></HistoryErrorBoundary>}
-        {tab==="operations"&&<OperationsView db={db} products={products} documents={history} customers={customers} company={co} role={role} onDocumentsRefresh={async()=>setHistory(await db.getDocuments())}/>}
+        {tab==="history"&&<HistoryErrorBoundary key={routeFilter||"active"} onHome={()=>setTab("home")}><HistoryView initialStatus={routeFilter||"active"} history={history} setHistory={setHistory} co={co} products={products} setProducts={setProducts} customers={customers} user={user} role={role}/></HistoryErrorBoundary>}
+        {tab==="operations"&&<OperationsView db={db} products={products} documents={history} role={role} onDocumentsRefresh={async()=>setHistory(await db.getDocuments())}/>}
         {tab==="products"&&<ProductsView initialNegative={routeFilter==="negative"} products={products} setProducts={setProducts} user={user}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}
