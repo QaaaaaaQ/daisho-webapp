@@ -41,7 +41,7 @@ export function OperationsView({db,products,documents,role,onDocumentsRefresh}) 
       </div>
       {admin&&<div style={{display:'flex',gap:7,flexWrap:'wrap',marginTop:12}}>
         <p style={{flexBasis:'100%',fontSize:11,color:'#92400e',margin:'2px 0'}}>期首ロットのkg合計は商品マスターの現在庫と一致させてください。箱数は実数を登録してください。既存在庫は自動で変更されません。</p>
-        <select style={fieldStyle} value={lot.productId||''} onChange={e=>setLot(x=>({...x,productId:e.target.value}))}><option value="">商品</option>{products.map(p=><option key={p.id} value={p.id}>{p.code||''} {p.name}</option>)}</select>
+        <select style={fieldStyle} value={lot.productId||''} onChange={e=>setLot(x=>({...x,productId:e.target.value}))}><option value="">商品</option>{products.filter(p=>!p.archivedAt).map(p=><option key={p.id} value={p.id}>{p.code||''} {p.name}</option>)}</select>
         <select style={fieldStyle} value={lot.event||'opening_balance'} onChange={e=>setLot(x=>({...x,event:e.target.value}))}><option value="opening_balance">既存在庫の期首ロット化</option><option value="receipt">新規入庫</option></select>
         <input style={fieldStyle} placeholder="ロット番号" value={lot.lotCode||''} onChange={e=>setLot(x=>({...x,lotCode:e.target.value}))}/>
         <input style={fieldStyle} type="date" aria-label="入庫日" value={lot.receivedOn||''} onChange={e=>setLot(x=>({...x,receivedOn:e.target.value}))}/>
