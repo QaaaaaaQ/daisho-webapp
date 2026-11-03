@@ -17,6 +17,7 @@ import { getPcaReceiptIssues, pcaReceiptsToCSV } from "./lib/pca-receipts.js";
 import { draftItem, localDate, validItems, validateDocument, documentTotal } from "./lib/domain";
 import { PcaReadiness } from './components/PcaReadiness.jsx';
 import { saveValidatedDocument } from './lib/save-document.js';
+import { alignUnitsWithMaster } from './lib/unit-matching.js';
 import { pcaInputIssues } from './lib/input-quality.js';
 import { recordInputEvents, validationEvent, failureEvent } from './lib/input-events.js';
 
@@ -160,19 +161,20 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
   };
   const handleSave = async (print) => {
     if (!f.customer) { await recordOrWarn(f.docType,'validation_error',[{code:'customer_missing',field:'customer'}]); alert("取引先を選択してください"); return; }
-    const receiptItems = validItems(f.items);
-    const validationError = validateDocument({ ...f, items: receiptItems });
+    const aligned=alignUnitsWithMaster(f,products);
+    const receiptItems = validItems(aligned.items);
+    const validationError = validateDocument({ ...aligned, items: receiptItems });
     if (validationError) { await recordOrWarn(f.docType,'validation_error',[validationEvent(validationError)]); alert(validationError); return; }
-    if(f.inventoryMode==='reserve'&&f.items.some(item=>item?.name&&(!item.productId||item.unit!=='kg'||Number(item.qty)<=0||!Number.isInteger(Number(item.caseCount||0))||Number(item.caseCount||0)<0))) {
+    if(aligned.inventoryMode==='reserve'&&aligned.items.some(item=>item?.name&&(!item.productId||item.unit!=='kg'||Number(item.qty)<=0||!Number.isInteger(Number(item.caseCount||0))||Number(item.caseCount||0)<0))) {
       await recordOrWarn(f.docType,'validation_error',[{code:'reservation_invalid',field:'inventory'}]);alert('在庫予約には商品マスターに登録済みのkg単位の商品と、正確なkg実重量・箱数が必要です。');return;
     }
-    const issues=pcaInputIssues(f,customers,products);
+    const issues=pcaInputIssues(aligned,customers,products);
     if(issues.length){await recordOrWarn(f.docType,'validation_error',issues);alert('PCA出力のため、表示された項目を確認してください。');return;}
-    const normalizedDoc = normalizeReceiptForSave({ ...f, items: receiptItems });
+    const normalizedDoc = normalizeReceiptForSave({ ...aligned, items: receiptItems });
     if (!confirmReceiptAmount(normalizedDoc)) return;
     setSaving(true);
     try {
-      const doc = f.docType === "領収書" ? normalizedDoc : { ...f, items: f.items };
+      const doc = f.docType === "領収書" ? normalizedDoc : aligned;
       const saved = await db.saveDocument(doc, user);
       if (saved._duplicate) {
         // 重複検知: 出庫処理はスキップ（在庫の二重減算防止）。PDFは既存書類で生成可
@@ -252,7 +254,7 @@ function DirectDocForm({ co, products, customers, history, setHistory, setProduc
 }
 
 function DocEditModal({ doc, onClose, onSave, co, products, customers, setProducts, setCustomers }) {
-  const [d, setD] = useState({ ...doc });
+  const [d, setD] = useState(()=>alignUnitsWithMaster(doc,products||[]));
   const [saving,setSaving]=useState(false);
   const saveLock=useRef(false);
   const editReceiptItems = validItems(d.items);
@@ -261,13 +263,14 @@ function DocEditModal({ doc, onClose, onSave, co, products, customers, setProduc
   const upd = (k,v) => setD(x=>({...x,[k]:v}));
   const submit = async () => {
     if(saveLock.current)return;
-    const validationError=validateDocument(d);
+    const aligned=alignUnitsWithMaster(d,products||[]);
+    const validationError=validateDocument(aligned);
     if(validationError){await recordOrWarn(d.docType,'validation_error',[validationEvent(validationError)]);alert(validationError);return;}
-    const issues=pcaInputIssues(d,customers,products);
+    const issues=pcaInputIssues(aligned,customers,products);
     if(issues.length){await recordOrWarn(d.docType,'validation_error',issues);alert('PCA出力のため、表示された項目を確認してください。');return;}
-    if(!confirmReceiptAmount(d))return;
+    if(!confirmReceiptAmount(aligned))return;
     saveLock.current=true;setSaving(true);
-    try{await onSave(d);}finally{saveLock.current=false;setSaving(false);}
+    try{await onSave(aligned);}finally{saveLock.current=false;setSaving(false);}
   };
   return <Modal title={`${d.docType} 編集`} onClose={onClose} maxW={900} tall>
     <div className="document-form-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:12 }}>
@@ -413,7 +416,7 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
           setLoading(false);
           return;
         }
-        const prepared = {...normalizeReceiptForSave(parsed),stockManaged:parsed.docType==="\u7d0d\u54c1\u66f8"};
+        const prepared = {...normalizeReceiptForSave(alignUnitsWithMaster(parsed,products)),stockManaged:parsed.docType==="\u7d0d\u54c1\u66f8"};
         const msgId = tid();
         setDocStates(s=>({...s,[msgId]:{doc:prepared,saved:false,saving:false}}));
         setMsgs(m=>[...m,{id:msgId,role:"assistant",text:"\u8349\u7a3f\u3092\u4f5c\u6210\u3057\u307e\u3057\u305f\u3002\u300c\u5185\u5bb9\u78ba\u8a8d\u30fb\u4fdd\u5b58\u300d\u3067\u78ba\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044\u3002\u307e\u3060\u5728\u5eab\u306f\u52d5\u304b\u3057\u3066\u3044\u307e\u305b\u3093\u3002",doc:prepared}]);
