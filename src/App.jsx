@@ -465,11 +465,11 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
       if (saved.id) {
         await recordOrWarn(saved.docType,'saved',[{code:'saved',field:'document'}],saved.id);
         setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
-        setProducts(await db.getProducts());
       }
       setDocStates(s=>({...s,[editTarget.msgId]:{ ...s[editTarget.msgId], doc:saved, saved:Boolean(saved.id), saving:false }}));
       setMsgs(m=>m.map(msg=>msg.id===editTarget.msgId?{...msg,doc:saved,text:(saved.docType||"書類")+"を更新しました ✓"}:msg));
       setEditTarget(null);
+      if(saved.id){try{setProducts(await db.getProducts());}catch{alert('書類は保存済みです。商品情報の再読み込みに失敗しました。画面を再読み込みしてください。');}}
     } catch (e) { await recordOrWarn(prepared.docType,'save_error',[failureEvent(e)]);alert("編集保存エラー: " + e.message); }
   };
 
@@ -487,7 +487,7 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
           <div style={{ maxWidth:"78%", background:isUser?N:"#f3f4f6", color:isUser?"#fff":"#111", borderRadius:isUser?"12px 12px 3px 12px":"12px 12px 12px 3px", padding:"9px 13px", fontSize:13, lineHeight:1.6, whiteSpace:"pre-wrap" }}>{msg.text}</div>
           {curDoc&&<DocCard doc={curDoc} co={co}
             onEdit={()=>setEditTarget({ msgId:msg.id, doc:curDoc })}
-            onPrint={()=>generateAndDownloadPDF(curDoc,co)}
+            onPrint={()=>generateAndDownloadPDF(curDoc,co).catch(e=>alert('書類は保存済みですが、PDFを作成できませんでした: '+e.message))}
             saved={ds?.saved||false} saving={ds?.saving||false}
           />}
           {msg.parseResult&&<ParseReviewCard result={msg.parseResult}/>}
