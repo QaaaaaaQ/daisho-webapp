@@ -856,6 +856,7 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
   const [f, setF] = useState({});
   const [logs, setLogs] = useState([]);
   const [statusLogs,setStatusLogs]=useState([]);
+  const [deletedHistory,setDeletedHistory]=useState([]);
   const [logProduct, setLogProduct] = useState(null);
   const [onlyNegative,setOnlyNegative]=useState(initialNegative);
   const [sortKey, setSortKey] = useState("code");
@@ -897,6 +898,16 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
     try {setStatusBusy(true);await db.setProductArchived(product.id,archive,reason.trim(),Number(product.stock));setProducts(await db.getProducts());}
     catch(e) { alert('商品状態の変更エラー: ' + e.message); } finally {setStatusBusy(false);}
   };
+  const deleteProduct = async product => {
+    if(statusBusy)return;
+    const reason=window.prompt('削除する理由を入力してください。削除は取り消せません。');
+    if(reason===null)return;
+    if(!reason.trim()){alert('削除理由を入力してください');return;}
+    if(!window.confirm(`${product.name}（コード: ${product.code||'なし'}）を完全に削除します。\nこの商品の在庫 ${product.stock} ${product.unit||''} は商品一覧と在庫合計からなくなります。\n削除履歴と入出庫履歴は保存されます。よろしいですか？`))return;
+    try {setStatusBusy(true);await db.deleteMisregisteredProduct(product.id,Number(product.stock),reason.trim());setProducts(current=>current.filter(p=>p.id!==product.id));try{setProducts(await db.getProducts());}catch{alert('商品は削除済みです。最新情報の取得に失敗しました。画面を再読み込みしてください。');}}
+    catch(e){alert('削除エラー: '+e.message);}finally{setStatusBusy(false);}
+  };
+  const openDeletedHistory=async()=>{try{setDeletedHistory(await db.getDeletedProductHistory());setM('deletedHistory');}catch(e){alert('削除履歴を取得できません: '+e.message);}};
   const doReceive = async () => {
     if(stockLock.current)return;
     if (!logProduct || !receiving.qty) { alert("数量を入力してください"); return; }
@@ -924,6 +935,7 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
       <span style={{ fontSize:11, color:"#9ca3af" }}>▲▼ヘッダーで並び替え・内容をクリックで絞り込み（{filtered.length}件表示）</span>
       {(cellFilter || catFilter!=="全て") && <Btn small onClick={()=>{setCellFilter(null);setCatFilter("全て");}}>✕ フィルタ解除{cellFilter ? `（${({code:"コード",category:"分類",name:"商品名",origin:"産地",unit:"単位",taxRate:"税率"})[cellFilter.key] || cellFilter.key}: ${cellFilter.value}）` : ""}</Btn>}
       <div style={{ marginLeft:"auto", display:"flex", gap:6 }}>
+        {role==='admin'&&<Btn small onClick={openDeletedHistory}>削除履歴</Btn>}
         <Btn variant="primary" small onClick={()=>open(null)}>＋ 新規登録</Btn>
       </div>
     </div>
@@ -965,6 +977,7 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
                   <Btn small onClick={()=>open(p)}>編集</Btn>
                   {p.archivedAt&&<span>停用済み</span>}
                   {role==='admin'&&<Btn small variant={p.archivedAt?'ghost':'red'} disabled={statusBusy} onClick={()=>changeStatus(p,!p.archivedAt)}>{p.archivedAt?'再開':'停用'}</Btn>}
+                  {role==='admin'&&<Btn small variant="red" disabled={statusBusy} onClick={()=>deleteProduct(p)}>削除</Btn>}
                 </div>
               </td>
             </tr>;
@@ -973,6 +986,10 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
         </tbody>
       </table>
     </div>
+    {m==='deletedHistory'&&<Modal title="削除した商品の履歴" onClose={()=>setM(null)} maxW={640}>
+      <p>最新100件を表示します。</p>{deletedHistory.length===0&&<p>削除履歴はありません。</p>}
+      {deletedHistory.map(d=><div key={d.product_id} style={{borderBottom:'1px solid #e5e7eb',padding:'10px 0',fontSize:12}}><strong>{d.product_name}（{d.product_code||'コードなし'}）</strong><div>{new Date(d.deleted_at).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})} · {d.actor_email} · {d.reason}</div><div>削除時の在庫: {d.stock} {d.unit}</div><div>保存された入出庫履歴</div>{d.stock_events.map(e=><div key={e.id}>{new Date(e.created_at).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})} · {e.change} {d.unit} · {e.actor_email||'担当不明'} · {e.reason}</div>)}{d.status_events.map(e=><div key={e.id}>{new Date(e.created_at).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})} · {e.archived?'停用':'再開'} · {e.actor_email} · {e.reason}</div>)}</div>)}
+    </Modal>}
     {m==="logs"&&logProduct&&<Modal title={"📦 履歴・入庫: " + logProduct.name} onClose={()=>setM(null)} maxW={540}>
       {role==='admin'&&statusLogs.length>0&&<div style={{fontSize:12,marginBottom:12}}><strong>停用・再開履歴</strong>{statusLogs.map((event,i)=><div key={i} style={{padding:'4px 0'}}>{new Date(event.created_at).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})} · {event.archived?'停用':'再開'} · {event.actor_email} · {event.reason} · 在庫 {event.stock_at_change} {logProduct.unit}</div>)}</div>}
       <div style={{ marginBottom:12, display:"flex", justifyContent:"space-between" }}>
