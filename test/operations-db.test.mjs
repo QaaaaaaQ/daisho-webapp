@@ -18,7 +18,7 @@ test.before(async()=>{
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101083428_fix_user_list_email_type.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101131115_document_input_audit.sql',import.meta.url),'utf8'));
   await pg.exec("ALTER TABLE public.products ENABLE ROW LEVEL SECURITY; GRANT SELECT, UPDATE, DELETE ON public.products TO authenticated; CREATE POLICY products_select ON public.products FOR SELECT TO authenticated USING (true);");
-  await pg.exec(await readFile(new URL('../supabase/migrations/20261103033340_product_staff_edit_permissions.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261103033729_product_staff_edit_permissions.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
