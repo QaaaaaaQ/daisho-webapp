@@ -109,7 +109,7 @@ function ItemsEditor({ items, products, onChange, docType="納品書" }) {
             <td style={{ padding:"3px 4px" }}>
               <select style={{ ...SEL, width:130, fontSize:11, padding:"4px 5px" }} aria-label={`明細 ${i+1} の品名`} value={it.productId || products.find(p=>p.name===it.name)?.id || ""} onChange={e=>{ const p=products.find(x=>x.id===e.target.value); if(p) fill(i,p); else upd(i,"name",e.target.value); }}>
                 <option value="">品名選択</option>
-                {products.map(p=><option key={p.id} value={p.id}>{[p.code,p.name,p.origin].filter(Boolean).join(" / ")}</option>)}
+                {products.filter(p=>!p.archivedAt||p.id===it.productId).map(p=><option key={p.id} value={p.id} disabled={Boolean(p.archivedAt)}>{[p.code,p.name,p.origin,p.archivedAt?'停用済み':''].filter(Boolean).join(" / ")}</option>)}
               </select>
             </td>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:70, fontSize:11, padding:"4px 5px" }} aria-label={`明細 ${i+1} の産地`} value={it.origin||""} onChange={e=>upd(i,"origin",e.target.value)} placeholder="韓国産"/></td>
@@ -855,6 +855,7 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
   const [m, setM] = useState(null);
   const [f, setF] = useState({});
   const [logs, setLogs] = useState([]);
+  const [statusLogs,setStatusLogs]=useState([]);
   const [logProduct, setLogProduct] = useState(null);
   const [onlyNegative,setOnlyNegative]=useState(initialNegative);
   const [sortKey, setSortKey] = useState("code");
@@ -865,6 +866,8 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
   const [adjustQty, setAdjustQty] = useState("");
   const [adjustReason,setAdjustReason]=useState("");
   const [stockBusy,setStockBusy]=useState(false);
+  const [showArchived,setShowArchived]=useState(false);
+  const [statusBusy,setStatusBusy]=useState(false);
   const stockLock=useRef(false);
   const categories = [...new Set(products.map(p=>p.category).filter(Boolean))].sort();
   const upd = (k,v) => setF(x=>({...x,[k]:v}));
@@ -872,23 +875,27 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
   const selectCell = (key, value) => setCellFilter(prev => prev?.key === key && prev?.value === String(value ?? "") ? null : { key, value: String(value ?? "") });
   const filterableCell = (key, value, children, style={}) => <td title="クリックしてこの内容で絞り込み（再クリックで解除）" onClick={()=>selectCell(key,value)} style={{ padding:"6px 10px", cursor:"pointer", background:cellFilter?.key===key&&cellFilter?.value===String(value??"")?"#dbeafe":undefined, ...style }}>{children}</td>;
   const sort = (key) => { if(sortKey===key) setSortDir(d=>-d); else { setSortKey(key); setSortDir(1); } };
-  const filtered = products.filter(p => (!onlyNegative||Number(p.stock)<0) && (catFilter==="全て" || p.category===catFilter) && (!cellFilter || String(p[cellFilter.key]??"")===cellFilter.value));
+  const filtered = products.filter(p => (showArchived||!p.archivedAt||onlyNegative) && (!onlyNegative||Number(p.stock)<0) && (catFilter==="全て" || p.category===catFilter) && (!cellFilter || String(p[cellFilter.key]??"")===cellFilter.value));
   const sorted = [...filtered].sort((a,b)=>{
     const av=a[sortKey]||"", bv=b[sortKey]||"";
     if(!isNaN(Number(av))&&!isNaN(Number(bv))) return (Number(av)-Number(bv))*sortDir;
     return String(av).localeCompare(String(bv),"ja")*sortDir;
   });
   const open = (p) => { setF(p||{ name:"", code:"", category:"", origin:"", unit:"kg", price:"", purchasePrice:"", taxRate:8, caseQty:"", qtyPerCase:"", stock:0, note:"" }); setM("edit"); };
-  const openLogs = async (p) => { try { setLogProduct(p); setLogs(await getStockLogs(p.id)); setM("logs"); } catch (e) { alert("在庫履歴の取得エラー: " + e.message); } };
+  const openLogs = async (p) => { try { const [stockEvents,statusEvents]=await Promise.all([getStockLogs(p.id),role==='admin'?db.getProductStatusAudit(p.id):Promise.resolve([])]);setLogProduct(p);setLogs(stockEvents);setStatusLogs(statusEvents);setM("logs"); } catch (e) { alert("在庫履歴の取得エラー: " + e.message); } };
   const save = async () => {
     if (!f.name) { alert("商品名は必須です"); return; }
     try { await db.saveProduct(f); setProducts(await db.getProducts()); setM(null); }
     catch(e) { alert("保存エラー: " + e.message); }
   };
-  const del = async (id) => {
-    if (!confirm("削除しますか？")) return;
-    try { await db.deleteProduct(id); setProducts(products.filter(p=>p.id!==id)); }
-    catch(e) { alert("削除エラー: " + e.message); }
+  const changeStatus = async (product,archive) => {
+    if(statusBusy)return;
+    const reason=window.prompt(archive?'停用する理由を入力してください':'再開する理由を入力してください');
+    if(reason===null)return;
+    if(!reason.trim()){alert('理由を入力してください');return;}
+    if(!window.confirm(`${product.name} を${archive?'停用':'再開'}します。現在庫 ${product.stock} ${product.unit||''} は変更されず、在庫・取引履歴も残ります。よろしいですか？`))return;
+    try {setStatusBusy(true);await db.setProductArchived(product.id,archive,reason.trim(),Number(product.stock));setProducts(await db.getProducts());}
+    catch(e) { alert('商品状態の変更エラー: ' + e.message); } finally {setStatusBusy(false);}
   };
   const doReceive = async () => {
     if(stockLock.current)return;
@@ -920,7 +927,7 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
         <Btn variant="primary" small onClick={()=>open(null)}>＋ 新規登録</Btn>
       </div>
     </div>
-    <label style={{fontSize:12,display:"block",padding:8}}><input type="checkbox" checked={onlyNegative} onChange={e=>setOnlyNegative(e.target.checked)}/>{"\u30de\u30a4\u30ca\u30b9\u5728\u5eab\u306e\u307f"}</label>
+    <div style={{display:'flex',flexWrap:'wrap',gap:12,padding:8,fontSize:12}}><label><input type="checkbox" checked={onlyNegative} onChange={e=>setOnlyNegative(e.target.checked)}/>マイナス在庫のみ</label><label><input type="checkbox" checked={showArchived} onChange={e=>setShowArchived(e.target.checked)}/>停用商品を表示</label>{products.some(p=>p.archivedAt&&Number(p.stock)!==0)&&<span role="status">停用商品にも在庫が残っています。「停用商品を表示」で確認してください。</span>}</div>
     <div style={{ flex:1, overflowX:"auto", overflowY:"auto" }}>
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
         <thead><tr style={{ background:N, color:"#fff" }}>
@@ -956,7 +963,8 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
                 <div style={{ display:"flex", gap:4 }}>
                   <Btn small onClick={()=>openLogs(p)}>📊 履歴/入庫</Btn>
                   <Btn small onClick={()=>open(p)}>編集</Btn>
-                  {role==='admin'&&<Btn small variant="red" onClick={()=>del(p.id)}>削除</Btn>}
+                  {p.archivedAt&&<span>停用済み</span>}
+                  {role==='admin'&&<Btn small variant={p.archivedAt?'ghost':'red'} disabled={statusBusy} onClick={()=>changeStatus(p,!p.archivedAt)}>{p.archivedAt?'再開':'停用'}</Btn>}
                 </div>
               </td>
             </tr>;
@@ -966,6 +974,7 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
       </table>
     </div>
     {m==="logs"&&logProduct&&<Modal title={"📦 履歴・入庫: " + logProduct.name} onClose={()=>setM(null)} maxW={540}>
+      {role==='admin'&&statusLogs.length>0&&<div style={{fontSize:12,marginBottom:12}}><strong>停用・再開履歴</strong>{statusLogs.map((event,i)=><div key={i} style={{padding:'4px 0'}}>{new Date(event.created_at).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})} · {event.archived?'停用':'再開'} · {event.actor_email} · {event.reason} · 在庫 {event.stock_at_change} {logProduct.unit}</div>)}</div>}
       <div style={{ marginBottom:12, display:"flex", justifyContent:"space-between" }}>
         <span style={{ fontSize:14 }}>{"現在庫: "}<strong style={{ fontSize:18, color:Number(logProduct.stock)<0?"#dc2626":"#111" }}>{fm(logProduct.stock) + " " + logProduct.unit}</strong></span>
       </div>

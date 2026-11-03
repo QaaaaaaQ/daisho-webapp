@@ -79,7 +79,7 @@ const dbImpl = {
       return { id: r.id, code: r.code, name: r.name, origin: r.origin, unit: r.unit,
         price: r.price, purchasePrice: r.purchase_price, category: r.category,
         taxRate: r.tax_rate, caseQty: r.case_qty, qtyPerCase: r.qty_per_case,
-        stock: r.stock, note: r.note };
+        stock: r.stock, note: r.note, archivedAt: r.archived_at };
     });
   },
   async saveProduct(p) {
@@ -104,11 +104,13 @@ const dbImpl = {
     if(error)throw error;
     if(!data)throw new Error('商品マスターが更新されました。最新情報を確認してください。');
   },
-  async deleteProduct(id) {
-    const { data, error } = await supabase.from("products").delete().eq("id", id).select("id").maybeSingle();
-    if (error?.code === '23503') throw new Error('在庫や取引の履歴がある商品は削除できません。履歴を保護するため、管理者に確認してください。');
-    if (error) throw error;
-    if (!data) throw new Error('商品を削除できません。在庫が残っているか、商品が削除済み、または管理者権限がありません。');
+  async setProductArchived(id, archived, reason, expectedStock) {
+    const {error}=await supabase.rpc('set_product_archived',{p_product_id:id,p_archived:archived,p_reason:reason,p_expected_stock:expectedStock});
+    if(error)throw error;
+  },
+  async getProductStatusAudit(id) {
+    const {data,error}=await supabase.rpc('list_product_status_audit',{p_product_id:id});
+    if(error)throw error;return data||[];
   },
   async updateStock(id, change, reason) {
     if(!Number.isFinite(Number(change))||!Number(change)||!String(reason||'').trim())throw new Error("\u6570\u91cf\u3068\u7406\u7531\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044");
@@ -227,7 +229,7 @@ export const db = new Proxy(dbImpl, { get(target,key,receiver) {
 // 戻り値は対話型ラッパー { need_info:boolean, message:string, doc:object|null }
 export async function aiParse(input, company, customers = [], products = []) {
   const custNames = customers.map(c => c.name);
-  const prodInfo = products.map(p => ({ id:p.id, code:p.code, name: p.name, origin: p.origin, unit: p.unit, price: p.price, taxRate: p.taxRate }));
+  const prodInfo = products.filter(p=>!p.archivedAt).map(p => ({ id:p.id, code:p.code, name: p.name, origin: p.origin, unit: p.unit, price: p.price, taxRate: p.taxRate }));
   const messages = Array.isArray(input) ? input : [{ role: "user", content: String(input) }];
   const { data, error } = await supabase.functions.invoke("ai", { body: { messages, type: "parse", company, customers: custNames, products: prodInfo } });
   if (error) throw new Error(error.message);

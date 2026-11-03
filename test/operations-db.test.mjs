@@ -19,12 +19,45 @@ test.before(async()=>{
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101131115_document_input_audit.sql',import.meta.url),'utf8'));
   await pg.exec("ALTER TABLE public.products ENABLE ROW LEVEL SECURITY; GRANT SELECT, UPDATE, DELETE ON public.products TO authenticated; CREATE POLICY products_select ON public.products FOR SELECT TO authenticated USING (true);");
   await pg.exec(await readFile(new URL('../supabase/migrations/20261103033729_product_staff_edit_permissions.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261103040041_admin_product_deactivation.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
   await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]);
 });
 test.after(async()=>pg?.close());
+
+test('admin can deactivate and restore with audit, stock and records intact',async()=>{
+  const staff=randomUUID(), id=randomUUID();
+  await pg.query('INSERT INTO auth.users VALUES($1,$2)',[staff,'archive-test@example.invalid']);
+  await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'employee')",[staff]);
+  await pg.query("INSERT INTO products(id,name,unit,stock) VALUES($1,'Archive fish','kg',2)",[id]);
+  await pg.query("INSERT INTO stock_logs(product_id,change,reason) VALUES($1,2,'receipt')",[id]);
+  const doc={docType:'納品書',date:'2026-11-03',customer:'Test',stockManaged:false,items:[{productId:id,name:'Archive fish',unit:'kg',qty:1,price:100,amount:100,taxRate:8,taxIncluded:false}]};
+  const existing=(await pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid) value',['create',JSON.stringify({doc}),randomUUID()])).rows[0].value.document;
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[staff]);
+  await assert.rejects(pg.query("SELECT public.set_product_archived($1,true,'duplicate',2)",[id]),/管理者/);
+  await assert.rejects(pg.query('SELECT * FROM public.list_product_status_audit($1)',[id]),/管理者/);
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]);
+  await assert.rejects(pg.query("SELECT public.set_product_archived($1,true,'duplicate',3)",[id]),/在庫/);
+  await pg.query("SELECT public.set_product_archived($1,true,'duplicate',2)",[id]);
+  let row=(await pg.query('SELECT stock,archived_at FROM products WHERE id=$1',[id])).rows[0];
+  assert.equal(Number(row.stock),2);assert.ok(row.archived_at);
+  assert.equal((await pg.query('SELECT count(*)::int n FROM stock_logs WHERE product_id=$1',[id])).rows[0].n,1);
+  assert.equal((await pg.query('SELECT count(*)::int n FROM app_private.product_status_audit WHERE product_id=$1',[id])).rows[0].n,1);
+  assert.equal((await pg.query('SELECT * FROM public.list_product_status_audit($1)',[id])).rows[0].reason,'duplicate');
+  await assert.rejects(pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid)',['create',JSON.stringify({doc}),randomUUID()]),/停用済み/);
+  const active=randomUUID();
+  await pg.query("INSERT INTO products(id,name,unit,stock) VALUES($1,'Archive fish','kg',5)",[active]);
+  const namedDoc={...doc,stockManaged:true,items:[{...doc.items[0],productId:undefined}]};
+  const named=(await pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid) value',['create',JSON.stringify({doc:namedDoc}),randomUUID()])).rows[0].value.document;
+  assert.equal(named.items[0].productId,active);
+  const invoice=(await pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid) value',['invoice',JSON.stringify({sourceIds:[existing.id],doc:{date:'2026-11-03'}}),randomUUID()])).rows[0].value.document;
+  assert.equal(invoice.doc_type,'請求書');
+  await pg.query("SELECT public.set_product_archived($1,false,'restore',2)",[id]);
+  row=(await pg.query('SELECT stock,archived_at FROM products WHERE id=$1',[id])).rows[0];
+  assert.equal(Number(row.stock),2);assert.equal(row.archived_at,null);
+});
 
 test('staff may edit product attributes but not stock or delete; administrators can delete unused products',async()=>{
   const staff=randomUUID(), unused=randomUUID();
