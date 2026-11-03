@@ -17,12 +17,39 @@ test.before(async()=>{
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101081041_revoke_legacy_workflow_rpcs.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101083428_fix_user_list_email_type.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261101131115_document_input_audit.sql',import.meta.url),'utf8'));
+  await pg.exec("ALTER TABLE public.products ENABLE ROW LEVEL SECURITY; GRANT SELECT, UPDATE, DELETE ON public.products TO authenticated; CREATE POLICY products_select ON public.products FOR SELECT TO authenticated USING (true);");
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261103033340_product_staff_edit_permissions.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
   await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]);
 });
 test.after(async()=>pg?.close());
+
+test('staff may edit product attributes but not stock or delete; administrators can delete unused products',async()=>{
+  const staff=randomUUID(), unused=randomUUID();
+  await pg.query('INSERT INTO auth.users VALUES($1,$2)',[staff,'staff-edit@example.invalid']);
+  await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'employee')",[staff]);
+  await pg.query("INSERT INTO products(id,name,stock) VALUES($1,'Test product',0)",[unused]);
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[staff]);
+  await pg.exec('SET ROLE authenticated');
+  try {
+    assert.equal((await pg.query("UPDATE products SET name='Changed' WHERE id=$1 RETURNING name",[unused])).rows[0].name,'Changed');
+    await assert.rejects(pg.query('UPDATE products SET stock=100 WHERE id=$1',[unused]));
+    assert.equal((await pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[unused])).rows.length,0);
+  } finally {await pg.exec('RESET ROLE');}
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]);
+  const linked=randomUUID();
+  await pg.query("INSERT INTO products(id,name,stock) VALUES($1,'Linked product',0)",[linked]);
+  await pg.query("INSERT INTO stock_logs(product_id,change) VALUES($1,2)",[linked]);
+  await pg.exec('SET ROLE authenticated');
+  try {
+    assert.equal((await pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[product])).rows.length,0);
+    await assert.rejects(pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[linked]),/foreign key/i);
+    assert.equal((await pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[unused])).rows.length,1);
+  }
+  finally {await pg.exec('RESET ROLE');}
+});
 
 test('reserve shipment mode is stored when a delivery document is created',async()=>{
   const reserveProduct=randomUUID();
