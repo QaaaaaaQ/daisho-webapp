@@ -16,6 +16,7 @@ import { pcaInvoicesToCSV } from "./lib/pca-sales.js";
 import { getPcaReceiptIssues, pcaReceiptsToCSV } from "./lib/pca-receipts.js";
 import { draftItem, localDate, validItems, validateDocument, documentTotal } from "./lib/domain";
 import { PcaReadiness } from './components/PcaReadiness.jsx';
+import { saveValidatedDocument } from './lib/save-document.js';
 import { pcaInputIssues } from './lib/input-quality.js';
 import { recordInputEvents, validationEvent, failureEvent } from './lib/input-events.js';
 
@@ -456,20 +457,19 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
 
   const handleEditSave = async (newDoc) => {
     const prepared = normalizeReceiptForSave(newDoc);
-    const validationError = validateDocument(prepared);
-    if (validationError) { await recordOrWarn('請求書','validation_error',[validationEvent(validationError)]);alert(validationError); return; }
-    const issues=pcaInputIssues(inv,customers,products);
-    if(issues.length){await recordOrWarn('請求書','validation_error',issues);alert('PCA出力のため、表示された項目を確認してください。');return;}
     try {
-      const saved = prepared.id ? await db.updateDocument(prepared.id, prepared) : await db.saveDocument(prepared,user);
+      const result=await saveValidatedDocument(prepared,customers,products,doc=>doc.id ? db.updateDocument(doc.id,doc) : db.saveDocument(doc,user));
+      if(result.validationError){await recordOrWarn(prepared.docType,'validation_error',[validationEvent(result.validationError)]);alert(result.validationError);return;}
+      if(result.issues){await recordOrWarn(prepared.docType,'validation_error',result.issues);alert('PCA出力のため、表示された項目を確認してください。');return;}
+      const saved=result.saved;
       if (saved.id) {
         await recordOrWarn(saved.docType,'saved',[{code:'saved',field:'document'}],saved.id);
         setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
-        setProducts(await db.getProducts());
       }
       setDocStates(s=>({...s,[editTarget.msgId]:{ ...s[editTarget.msgId], doc:saved, saved:Boolean(saved.id), saving:false }}));
       setMsgs(m=>m.map(msg=>msg.id===editTarget.msgId?{...msg,doc:saved,text:(saved.docType||"書類")+"を更新しました ✓"}:msg));
       setEditTarget(null);
+      if(saved.id){try{setProducts(await db.getProducts());}catch{alert('書類は保存済みです。商品情報の再読み込みに失敗しました。画面を再読み込みしてください。');}}
     } catch (e) { await recordOrWarn(prepared.docType,'save_error',[failureEvent(e)]);alert("編集保存エラー: " + e.message); }
   };
 
@@ -487,7 +487,7 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
           <div style={{ maxWidth:"78%", background:isUser?N:"#f3f4f6", color:isUser?"#fff":"#111", borderRadius:isUser?"12px 12px 3px 12px":"12px 12px 12px 3px", padding:"9px 13px", fontSize:13, lineHeight:1.6, whiteSpace:"pre-wrap" }}>{msg.text}</div>
           {curDoc&&<DocCard doc={curDoc} co={co}
             onEdit={()=>setEditTarget({ msgId:msg.id, doc:curDoc })}
-            onPrint={()=>generateAndDownloadPDF(curDoc,co)}
+            onPrint={()=>generateAndDownloadPDF(curDoc,co).catch(e=>alert('書類は保存済みですが、PDFを作成できませんでした: '+e.message))}
             saved={ds?.saved||false} saving={ds?.saving||false}
           />}
           {msg.parseResult&&<ParseReviewCard result={msg.parseResult}/>}
@@ -656,7 +656,9 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
       subject:checkedList.map(d=>d.subject).filter(Boolean).join("・")||"",
       dueDate:batchDueDate, bank:batchBank, items:allItems };
     const validationError = validateDocument(inv);
-    if (validationError) { alert(validationError); return; }
+    if (validationError) { await recordOrWarn('請求書','validation_error',[validationEvent(validationError)]);alert(validationError); return; }
+    const issues=pcaInputIssues(inv,customers,products);
+    if(issues.length){await recordOrWarn('請求書','validation_error',issues);alert('PCA出力のため、表示された項目を確認してください。');return;}
     try {
       batchLock.current=true;setBatchBusy(true);
       const saved = await db.invoiceDeliveryNotes(checkedList.map(d=>d.id),inv);
@@ -849,7 +851,7 @@ function HistoryView({ history, setHistory, co, products, setProducts, customers
   </div>;
 }
 
-function ProductsView({ products, setProducts, user, initialNegative=false }) {
+function ProductsView({ products, setProducts, user, role, initialNegative=false }) {
   const [m, setM] = useState(null);
   const [f, setF] = useState({});
   const [logs, setLogs] = useState([]);
@@ -954,7 +956,7 @@ function ProductsView({ products, setProducts, user, initialNegative=false }) {
                 <div style={{ display:"flex", gap:4 }}>
                   <Btn small onClick={()=>openLogs(p)}>📊 履歴/入庫</Btn>
                   <Btn small onClick={()=>open(p)}>編集</Btn>
-                  <Btn small variant="red" onClick={()=>del(p.id)}>削除</Btn>
+                  {role==='admin'&&<Btn small variant="red" onClick={()=>del(p.id)}>削除</Btn>}
                 </div>
               </td>
             </tr>;
@@ -1329,7 +1331,7 @@ export default function App() {
         {tab==="chat"&&<ChatView key={previewUser?.user_id||'admin'} co={co} products={products} customers={customers} history={visibleHistory} setHistory={setHistory} setProducts={setProducts} setCustomers={setCustomers} user={user}/>}
         {tab==="history"&&<HistoryErrorBoundary key={(previewUser?.user_id||'admin')+(routeFilter||"active")} onHome={()=>setTab("home")}><HistoryView initialStatus={routeFilter||"active"} history={visibleHistory} setHistory={setHistory} co={co} products={products} setProducts={setProducts} customers={customers} setCustomers={setCustomers} user={user} role={effectiveRole} previewMode={!!previewUser}/></HistoryErrorBoundary>}
         {tab==="operations"&&<OperationsView key={previewUser?.user_id||'admin'} db={db} products={products} documents={visibleHistory} role={effectiveRole} onDocumentsRefresh={async()=>setHistory(await db.getDocuments())}/>}
-        {tab==="products"&&<ProductsView initialNegative={routeFilter==="negative"} products={products} setProducts={setProducts} user={user}/>}
+        {tab==="products"&&<ProductsView initialNegative={routeFilter==="negative"} products={products} setProducts={setProducts} user={user} role={effectiveRole}/>}
         {tab==="customers"&&<CustomersView customers={customers} setCustomers={setCustomers}/>}
         {tab==="settings"&&<SettingsView co={co} setCo={setCo}/>}
       </div>

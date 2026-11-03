@@ -9,7 +9,8 @@ CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $$
  SELECT jsonb_build_object('email','test@example.invalid');
 $$;
 CREATE TABLE public.products (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text NOT NULL,
- code text,origin text,unit text,stock numeric DEFAULT 0,created_at timestamptz DEFAULT now());
+ code text,origin text,unit text,stock numeric DEFAULT 0,created_at timestamptz DEFAULT now(),
+ price numeric,purchase_price numeric,category text,tax_rate numeric,case_qty integer,qty_per_case integer,note text);
 CREATE TABLE public.company_settings (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),admin_emails text DEFAULT '',name text);
 CREATE TABLE public.customers (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text NOT NULL,code text,addr text,contact text,tel text,bank text,due_days integer,note text);
 CREATE TABLE public.documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),doc_type text NOT NULL,

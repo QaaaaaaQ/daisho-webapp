@@ -89,8 +89,9 @@ const dbImpl = {
       tax_rate: p.taxRate, case_qty: nullableInteger(p.caseQty), qty_per_case: nullableInteger(p.qtyPerCase),
       note: p.note };
     if (p.id) {
-      const { error } = await supabase.from("products").update(payload).eq("id", p.id).select("id").single();
+      const { data, error } = await supabase.from("products").update(payload).eq("id", p.id).select("id").maybeSingle();
       if (error) throw error;
+      if (!data) throw new Error('商品を更新できません。商品が削除されたか、操作権限がありません。最新情報を確認してください。');
     } else {
       const { error } = await supabase.from("products").insert([payload]);
       if (error) throw error;
@@ -104,8 +105,10 @@ const dbImpl = {
     if(!data)throw new Error('商品マスターが更新されました。最新情報を確認してください。');
   },
   async deleteProduct(id) {
-    const { error } = await supabase.from("products").delete().eq("id", id).select("id").single();
+    const { data, error } = await supabase.from("products").delete().eq("id", id).select("id").maybeSingle();
+    if (error?.code === '23503') throw new Error('在庫や取引の履歴がある商品は削除できません。履歴を保護するため、管理者に確認してください。');
     if (error) throw error;
+    if (!data) throw new Error('商品を削除できません。在庫が残っているか、商品が削除済み、または管理者権限がありません。');
   },
   async updateStock(id, change, reason) {
     if(!Number.isFinite(Number(change))||!Number(change)||!String(reason||'').trim())throw new Error("\u6570\u91cf\u3068\u7406\u7531\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044");
