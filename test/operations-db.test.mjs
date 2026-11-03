@@ -20,6 +20,7 @@ test.before(async()=>{
   await pg.exec("ALTER TABLE public.products ENABLE ROW LEVEL SECURITY; GRANT SELECT, UPDATE, DELETE ON public.products TO authenticated; CREATE POLICY products_select ON public.products FOR SELECT TO authenticated USING (true);");
   await pg.exec(await readFile(new URL('../supabase/migrations/20261103033729_product_staff_edit_permissions.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../supabase/migrations/20261103040601_admin_product_deactivation.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../supabase/migrations/20261103041448_admin_delete_misregistered_products.sql',import.meta.url),'utf8'));
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[actor,'admin@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'admin')",[actor]);
   await pg.query('INSERT INTO products(id,name,unit,stock) VALUES($1,$2,$3,100)',[product,'Fish','kg']);
@@ -59,7 +60,7 @@ test('admin can deactivate and restore with audit, stock and records intact',asy
   assert.equal(Number(row.stock),2);assert.equal(row.archived_at,null);
 });
 
-test('staff may edit product attributes but not stock or delete; administrators can delete unused products',async()=>{
+test('staff may edit product attributes but direct stock changes and deletes are denied',async()=>{
   const staff=randomUUID(), unused=randomUUID();
   await pg.query('INSERT INTO auth.users VALUES($1,$2)',[staff,'staff-edit@example.invalid']);
   await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'employee')",[staff]);
@@ -69,7 +70,7 @@ test('staff may edit product attributes but not stock or delete; administrators 
   try {
     assert.equal((await pg.query("UPDATE products SET name='Changed' WHERE id=$1 RETURNING name",[unused])).rows[0].name,'Changed');
     await assert.rejects(pg.query('UPDATE products SET stock=100 WHERE id=$1',[unused]));
-    assert.equal((await pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[unused])).rows.length,0);
+    await assert.rejects(pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[unused]));
   } finally {await pg.exec('RESET ROLE');}
   await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]);
   const linked=randomUUID();
@@ -77,11 +78,43 @@ test('staff may edit product attributes but not stock or delete; administrators 
   await pg.query("INSERT INTO stock_logs(product_id,change) VALUES($1,2)",[linked]);
   await pg.exec('SET ROLE authenticated');
   try {
-    assert.equal((await pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[product])).rows.length,0);
-    await assert.rejects(pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[linked]),/foreign key/i);
-    assert.equal((await pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[unused])).rows.length,1);
+    await assert.rejects(pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[product]));
+    await assert.rejects(pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[linked]));
+    await assert.rejects(pg.query('DELETE FROM products WHERE id=$1 RETURNING id',[unused]));
   }
   finally {await pg.exec('RESET ROLE');}
+});
+
+test('administrator deletes an erroneous product while preserving stock history and the other product',async()=>{
+  const staff=randomUUID(),doomed=randomUUID(),keep=randomUUID(),entry=randomUUID();
+  await pg.query('INSERT INTO auth.users VALUES($1,$2)',[staff,'delete-test@example.invalid']);
+  await pg.query("INSERT INTO app_private.user_roles(user_id,role) VALUES($1,'employee')",[staff]);
+  await pg.query("INSERT INTO products(id,name,code,unit,stock) VALUES($1,'Duplicate fish','','kg',2),($2,'Duplicate fish','FG-030','kg',3)",[doomed,keep]);
+  await pg.query("INSERT INTO stock_logs(id,product_id,change,reason) VALUES($1,$2,2,'receipt')",[entry,doomed]);
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[staff]);
+  await assert.rejects(pg.query("SELECT public.delete_misregistered_product($1,2,'error')",[doomed]),/管理者/);
+  await assert.rejects(pg.query('SELECT * FROM public.list_deleted_product_history()'),/管理者/);
+  await pg.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[actor]);
+  await assert.rejects(pg.query("SELECT public.delete_misregistered_product($1,3,'error')",[doomed]),/在庫/);
+  await pg.query("SELECT public.set_product_archived($1,true,'review',2)",[doomed]);
+  await pg.query("SELECT public.delete_misregistered_product($1,2,'error')",[doomed]);
+  assert.equal((await pg.query('SELECT count(*)::int n FROM products WHERE id=$1',[doomed])).rows[0].n,0);
+  assert.equal(Number((await pg.query('SELECT stock FROM products WHERE id=$1',[keep])).rows[0].stock),3);
+  const log=(await pg.query('SELECT product_id,deleted_product_id,change FROM stock_logs WHERE id=$1',[entry])).rows[0];
+  assert.equal(log.product_id,null);assert.equal(log.deleted_product_id,doomed);assert.equal(Number(log.change),2);
+  const history=(await pg.query('SELECT * FROM public.list_deleted_product_history()')).rows.find(r=>r.product_id===doomed);
+  assert.equal(history.reason,'error');assert.equal(history.stock_events[0].id,entry);
+  assert.equal(history.status_events[0].reason,'review');
+  const stale={docType:'領収書',date:'2026-11-03',customer:'Test',amount:100,items:[{productId:doomed,name:'Duplicate fish',qty:1,unit:'kg',price:100,amount:100,taxRate:8}]};
+  await assert.rejects(pg.query('SELECT public.sales_workflow($1,$2::jsonb,$3::uuid)',['create',JSON.stringify({doc:stale}),randomUUID()]),/削除されています/);
+});
+
+test('administrator cannot delete a product referenced by a document',async()=>{
+  const id=randomUUID(),docId=randomUUID();
+  await pg.query("INSERT INTO products(id,name,unit,stock) VALUES($1,'Referenced fish','kg',0)",[id]);
+  await pg.query("INSERT INTO documents(id,doc_type,doc_no,date,customer,items,created_by) VALUES($1,'納品書','DEL-DELETE-TEST','2026-11-03','Test',jsonb_build_array(jsonb_build_object('productId',$2::text,'name','Referenced fish')),$3)",[docId,id,actor]);
+  await assert.rejects(pg.query("SELECT public.delete_misregistered_product($1,0,'test')",[id]),/書類/);
+  assert.equal((await pg.query('SELECT count(*)::int n FROM products WHERE id=$1',[id])).rows[0].n,1);
 });
 
 test('reserve shipment mode is stored when a delivery document is created',async()=>{

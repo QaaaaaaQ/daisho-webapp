@@ -112,6 +112,14 @@ const dbImpl = {
     const {data,error}=await supabase.rpc('list_product_status_audit',{p_product_id:id});
     if(error)throw error;return data||[];
   },
+  async deleteMisregisteredProduct(id,expectedStock,reason) {
+    const {error}=await supabase.rpc('delete_misregistered_product',{p_product_id:id,p_expected_stock:expectedStock,p_reason:reason});
+    if(error)throw error;
+  },
+  async getDeletedProductHistory() {
+    const {data,error}=await supabase.rpc('list_deleted_product_history');
+    if(error)throw error;return data||[];
+  },
   async updateStock(id, change, reason) {
     if(!Number.isFinite(Number(change))||!Number(change)||!String(reason||'').trim())throw new Error("\u6570\u91cf\u3068\u7406\u7531\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044");
     const result=await workflow('adjust',{productId:id,change:Number(change),reason:String(reason).trim()});
