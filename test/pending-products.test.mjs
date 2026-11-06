@@ -16,7 +16,7 @@ test('new shipment products, stock movements and retries are atomic', async () =
         d:=replace(d, 'WHERE btrim(name)=btrim(it->>''name'')', 'WHERE archived_at IS NULL AND btrim(name)=btrim(it->>''name'')');
         EXECUTE d;
       END $x$;`);
-    await db.exec(await readFile(new URL('../supabase/migrations/20261106023139_automatic_pending_products.sql',import.meta.url),'utf8'));
+    await db.exec(await readFile(new URL('../supabase/migrations/20261106024325_automatic_pending_products.sql',import.meta.url),'utf8'));
     const user=randomUUID(),request=randomUUID();
     await db.query('INSERT INTO auth.users(id,email) VALUES($1,$2)',[user,'staff@example.invalid']);
     await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[user]);
