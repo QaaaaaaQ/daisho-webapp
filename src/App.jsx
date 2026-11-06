@@ -305,7 +305,7 @@ function DocEditModal({ doc, onClose, onSave, co, products, customers, setProduc
   </Modal>;
 }
 
-function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
+function DocCard({ doc, co, onEdit, onPrint, onSavePrint, saved, saving }) {
   const tx = documentTax(doc);
   const docTotal = totalFor(doc);
   const hasReceiptDetails = validItems(doc.items).length > 0;
@@ -331,6 +331,7 @@ function DocCard({ doc, co, onEdit, onPrint, saved, saving }) {
         </div>
         <div style={{ display:"flex", gap:5, flexWrap:"wrap", justifyContent:"flex-end" }}>
           <Btn small onClick={onEdit}>{saved?"\u7de8\u96c6":"\u5185\u5bb9\u78ba\u8a8d\u30fb\u4fdd\u5b58"}</Btn>
+          {!saved&&<Btn small variant="blue" disabled={saving} onClick={onSavePrint}>保存してPDF生成</Btn>}
           <Btn small variant="primary" disabled={!saved||saving} onClick={onPrint}>📄 PDF生成</Btn>
           {saving&&<span style={{ fontSize:11, color:"#9ca3af", alignSelf:"center" }}>保存中...</span>}
           {!saving&&saved&&<span style={{ fontSize:11, color:"#16a34a", alignSelf:"center" }}>✓ 保存済</span>}
@@ -385,6 +386,7 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
   const [showDirect, setShowDirect] = useState(false);
   const [pendingParse, setPendingParse] = useState(null); // 書類作成の質問ループ中の会話履歴
   const bottomRef = useRef(null);
+  const quickSaveLocks = useRef(new Set());
   const SUGG = ["5/5 平家茶屋 真河豚ドレス30×1,700円 税込 納品書","4月分 TEN&A さざえ請求書","藤屋 まふぐ刺身6パック×6,600円 納品書"];
   useEffect(()=>{ bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [msgs, loading]);
 
@@ -478,6 +480,30 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
     } catch (e) { await recordOrWarn(prepared.docType,'save_error',[failureEvent(e)]);alert("編集保存エラー: " + e.message); }
   };
 
+  const handleQuickSavePrint = async (msgId,doc) => {
+    if(quickSaveLocks.current.has(msgId)||isEmployeePreview())return;
+    quickSaveLocks.current.add(msgId);
+    setDocStates(s=>({...s,[msgId]:{...s[msgId],saving:true}}));
+    let saved;
+    try {
+      const result=await saveValidatedDocument(doc,customers,products,d=>db.saveDocument(d,user));
+      if(result.validationError)throw new Error(result.validationError);
+      if(result.issues)throw new Error(result.issues.map(x=>x.message).join('\n'));
+      saved=result.saved;
+      if(!saved?.id)throw new Error('保存結果を確認できませんでした。履歴を確認してください。');
+      setDocStates(s=>({...s,[msgId]:{...s[msgId],doc:saved,saved:true,saving:false}}));
+      setHistory(h=>[saved,...h.filter(x=>x.id!==saved.id)]);
+      setMsgs(m=>m.map(x=>x.id===msgId?{...x,doc:saved,text:'保存しました ✓'}:x));
+      await recordOrWarn(saved.docType,'saved',[{code:'saved',field:'document'}],saved.id);
+      try { setProducts(await db.getProducts()); } catch { alert('書類は保存済みです。商品情報の再読み込みに失敗しました。'); }
+    } catch(e) {
+      await recordOrWarn(doc.docType,'save_error',[failureEvent(e)]);
+      alert('保存エラー: '+e.message);
+      setDocStates(s=>({...s,[msgId]:{...s[msgId],saving:false}}));
+    } finally { quickSaveLocks.current.delete(msgId); }
+    if(saved?.id)try { await generateAndDownloadPDF(saved,co); } catch(e) { alert('書類は保存済みですが、PDFを作成できませんでした: '+e.message); }
+  };
+
   return <div className="sales-view" style={{ display:"flex", flexDirection:"column", height:"100%" }}>
     <div className="sales-toolbar" style={{ padding:"8px 16px", borderBottom:"1px solid #f0f0f0", display:"flex", gap:8 }}>
       <Btn small variant="primary" onClick={()=>setShowDirect(true)}>📝 直接作成</Btn>
@@ -492,6 +518,7 @@ export function ChatView({ co, products, customers, history, setHistory, setProd
           <div style={{ maxWidth:"78%", background:isUser?N:"#f3f4f6", color:isUser?"#fff":"#111", borderRadius:isUser?"12px 12px 3px 12px":"12px 12px 12px 3px", padding:"9px 13px", fontSize:13, lineHeight:1.6, whiteSpace:"pre-wrap" }}>{msg.text}</div>
           {curDoc&&<DocCard doc={curDoc} co={co}
             onEdit={()=>setEditTarget({ msgId:msg.id, doc:curDoc })}
+            onSavePrint={()=>handleQuickSavePrint(msg.id,curDoc)}
             onPrint={()=>generateAndDownloadPDF(curDoc,co).catch(e=>alert('書類は保存済みですが、PDFを作成できませんでした: '+e.message))}
             saved={ds?.saved||false} saving={ds?.saving||false}
           />}
@@ -894,6 +921,12 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
     try { await db.saveProduct(f); setProducts(await db.getProducts()); setM(null); }
     catch(e) { alert("保存エラー: " + e.message); }
   };
+  const reviewProduct = async product => {
+    if(statusBusy)return;
+    if(!window.confirm(`${product.name} の商品情報を確認済みにします。現在庫は ${product.stock} ${product.unit||''} です。在庫数は変更されません。よろしいですか？`))return;
+    try { setStatusBusy(true); await db.reviewPendingProduct(product.id); setProducts(await db.getProducts()); }
+    catch(e) { alert('確認エラー: '+e.message); } finally { setStatusBusy(false); }
+  };
   const changeStatus = async (product,archive) => {
     if(statusBusy)return;
     const reason=window.prompt(archive?'停用する理由を入力してください':'再開する理由を入力してください');
@@ -945,6 +978,7 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
       </div>
     </div>
     <div style={{display:'flex',flexWrap:'wrap',gap:12,padding:8,fontSize:12}}><label><input type="checkbox" checked={onlyNegative} onChange={e=>setOnlyNegative(e.target.checked)}/>マイナス在庫のみ</label><label><input type="checkbox" checked={showArchived} onChange={e=>setShowArchived(e.target.checked)}/>停用商品を表示</label>{products.some(p=>p.archivedAt&&Number(p.stock)!==0)&&<span role="status">停用商品にも在庫が残っています。「停用商品を表示」で確認してください。</span>}</div>
+    {products.some(p=>p.pendingReview)&&<div role="status" style={{padding:'8px 16px',background:'#fff7ed',color:'#9a3412'}}>自動登録された商品 {products.filter(p=>p.pendingReview).length} 件は管理者の確認が必要です。分類と在庫を確認してください。</div>}
     <div style={{ flex:1, overflowX:"auto", overflowY:"auto" }}>
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
         <thead><tr style={{ background:N, color:"#fff" }}>
@@ -980,6 +1014,8 @@ function ProductsView({ products, setProducts, user, role, initialNegative=false
                 <div style={{ display:"flex", gap:4 }}>
                   <Btn small onClick={()=>openLogs(p)}>📊 履歴/入庫</Btn>
                   <Btn small onClick={()=>open(p)}>編集</Btn>
+                  {p.pendingReview&&<span>要確認</span>}
+                  {p.pendingReview&&role==='admin'&&<Btn small disabled={statusBusy} onClick={()=>reviewProduct(p)}>確認完了</Btn>}
                   {p.archivedAt&&<span>停用済み</span>}
                   {role==='admin'&&<Btn small variant={p.archivedAt?'ghost':'red'} disabled={statusBusy} onClick={()=>changeStatus(p,!p.archivedAt)}>{p.archivedAt?'再開':'停用'}</Btn>}
                   {role==='admin'&&<Btn small variant="red" disabled={statusBusy} onClick={()=>deleteProduct(p)}>削除</Btn>}

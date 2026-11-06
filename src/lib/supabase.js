@@ -79,8 +79,12 @@ const dbImpl = {
       return { id: r.id, code: r.code, name: r.name, origin: r.origin, unit: r.unit,
         price: r.price, purchasePrice: r.purchase_price, category: r.category,
         taxRate: r.tax_rate, caseQty: r.case_qty, qtyPerCase: r.qty_per_case,
-        stock: r.stock, note: r.note, archivedAt: r.archived_at };
+        stock: r.stock, note: r.note, archivedAt: r.archived_at, pendingReview: r.pending_review };
     });
+  },
+  async reviewPendingProduct(id) {
+    const {error}=await supabase.rpc('review_pending_product',{p_id:id});
+    if(error)throw error;
   },
   async saveProduct(p) {
     const nullableInteger = (value) => value === "" || value == null ? null : Number(value);
