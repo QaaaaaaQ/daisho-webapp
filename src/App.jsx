@@ -18,6 +18,7 @@ import { draftItem, localDate, validItems, validateDocument, documentTotal } fro
 import { PcaReadiness } from './components/PcaReadiness.jsx';
 import { saveValidatedDocument } from './lib/save-document.js';
 import { alignUnitsWithMaster } from './lib/unit-matching.js';
+import { itemProductSelection } from './lib/item-product-selection.js';
 import { pcaInputIssues } from './lib/input-quality.js';
 import { recordInputEvents, validationEvent, failureEvent } from './lib/input-events.js';
 
@@ -108,8 +109,9 @@ function ItemsEditor({ items, products, onChange, docType="納品書" }) {
           {items.map((it,i)=><tr key={i} style={{ borderBottom:"1px solid #f0f0f0" }}>
             <td style={{ padding:"3px 4px" }}><input style={{ ...INP, width:110, fontSize:11, padding:"4px 5px" }} type="date" aria-label={`明細 ${i+1} の日付`} value={it.date||""} onChange={e=>upd(i,"date",e.target.value)}/></td>
             <td style={{ padding:"3px 4px" }}>
-              <select style={{ ...SEL, width:130, fontSize:11, padding:"4px 5px" }} aria-label={`明細 ${i+1} の品名`} value={it.productId || products.find(p=>p.name===it.name)?.id || ""} onChange={e=>{ const p=products.find(x=>x.id===e.target.value); if(p) fill(i,p); else upd(i,"name",e.target.value); }}>
+              <select style={{ ...SEL, width:130, fontSize:11, padding:"4px 5px" }} aria-label={`明細 ${i+1} の品名`} value={itemProductSelection(it,products)} onChange={e=>{ const p=products.find(x=>x.id===e.target.value); if(p) fill(i,p); else if(e.target.value !== "__draft_name__") upd(i,"name",""); }}>
                 <option value="">品名選択</option>
+                {itemProductSelection(it,products)==="__draft_name__" && <option value="__draft_name__">{it.name}（商品要確認）</option>}
                 {products.filter(p=>!p.archivedAt||p.id===it.productId).map(p=><option key={p.id} value={p.id} disabled={Boolean(p.archivedAt)}>{[p.code,p.name,p.origin,p.archivedAt?'停用済み':''].filter(Boolean).join(" / ")}</option>)}
               </select>
             </td>
